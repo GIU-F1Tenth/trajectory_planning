@@ -23,6 +23,8 @@ setup(
         'console_scripts': [
             'pure_pursuit_node_v1 = pure_pursuit_node.pure_pursuit_v1:main',
             'pure_pursuit_node_v2 = pure_pursuit_node.pure_pursuit_v2:main',
+            'a_star_exe = path_planner_node.a_star_planner:main',
+            'dijkestra_exe = path_planner_node.dijkstra_planner:main'
         ],
     },
 )
