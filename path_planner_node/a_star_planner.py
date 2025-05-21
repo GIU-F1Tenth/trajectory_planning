@@ -57,48 +57,9 @@ class AStarPlanner(Node):
 
     def map_callback(self, map_msg: OccupancyGrid):
         self.map_ = map_msg
-        # self.map_ = self.create_cspace(map_msg)
         # self.visited_map_.header.frame_id = map_msg.header.frame_id
         # self.visited_map_.info = map_msg.info
         # self.visited_map_.data = [-1] * (map_msg.info.height * map_msg.info.width)
-
-    def create_cspace(self, msg: OccupancyGrid) -> OccupancyGrid:
-        width = msg.info.width
-        height = msg.info.height
-        resolution = msg.info.resolution
-        origin = msg.info.origin
-
-        # Reshape data to 2D array
-        data = np.array(msg.data).reshape((height, width))
-
-        # Robot radius in meters
-        robot_radius = 0.3
-        inflation_radius = int(robot_radius / resolution)
-
-        # Binary occupied grid (1 for occupied, 0 for free/unknown)
-        occupied = (data == 100).astype(np.uint8)
-
-        # Define structuring element for inflation
-        structure = np.ones((2 * inflation_radius + 1, 2 * inflation_radius + 1), dtype=np.uint8)
-
-        # Apply dilation to inflate obstacles
-        inflated = grey_dilation(occupied, footprint=structure)
-
-        # Create new occupancy data (100 for inflated obstacles, 0 for free)
-        inflated_data = np.where(inflated == 1, 100, 0).astype(np.int8).flatten().tolist()
-
-        # Create new OccupancyGrid message
-        inflated_map = OccupancyGrid()
-        inflated_map.header = Header()
-        inflated_map.header.stamp = self.get_clock().now().to_msg()
-        inflated_map.header.frame_id = msg.header.frame_id
-        inflated_map.info = msg.info
-        inflated_map.data = inflated_data
-
-        # Save to class attribute
-        # self.map_ = inflated_map
-
-        return inflated_map
 
     def point_callback(self, point: PointStamped):
         if self.map_ is None:
