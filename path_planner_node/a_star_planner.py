@@ -57,6 +57,7 @@ class AStarPlanner(Node):
 
     def map_callback(self, map_msg: OccupancyGrid):
         self.map_ = map_msg
+        # self.map_ = self.create_cspace(map_msg)
         # self.visited_map_.header.frame_id = map_msg.header.frame_id
         # self.visited_map_.info = map_msg.info
         # self.visited_map_.data = [-1] * (map_msg.info.height * map_msg.info.width)
