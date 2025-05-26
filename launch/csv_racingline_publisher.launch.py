@@ -10,7 +10,7 @@ def generate_launch_description():
     csv_path_pub = Node(
             package='trajectory_planning',
             executable='csv_pub_exe',
-            name='csv_path_publisher_node',
+            name='csv_path_pub',
             parameters=[param_path],
             output='screen'
         )

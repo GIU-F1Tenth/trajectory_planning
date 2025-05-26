@@ -1,4 +1,4 @@
-csv_path_publisher_node:
+csv_path_pub:
   ros__parameters:
     path_topic: "/pp_path"
     csv_path: "/my_ws/src/trajectory_planning/path/sansibarstr_out.csv"
