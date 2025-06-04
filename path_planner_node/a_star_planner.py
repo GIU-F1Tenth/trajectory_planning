@@ -10,6 +10,7 @@ from queue import PriorityQueue
 from std_msgs.msg import Header
 import numpy as np
 from scipy.ndimage import grey_dilation
+from tf2_geometry_msgs.tf2_geometry_msgs import do_transform_pose
 
 class GraphNode:
     def __init__(self, x, y, cost=0, heuristic=0, prev=None):
@@ -39,6 +40,7 @@ class AStarPlanner(Node):
 
         map_qos = QoSProfile(depth=10)
         map_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+        self.declare_parameter("is_antiClockwise", True)
 
         self.map_sub = self.create_subscription(
             OccupancyGrid, "/costmap/costmap", self.map_callback, map_qos
@@ -49,9 +51,10 @@ class AStarPlanner(Node):
         self.point_sub = self.create_subscription(
             PointStamped, "/clicked_point", self.point_callback, 10
         )
-        self.path_pub = self.create_publisher(Path, "/a_star/path", 10)
+        self.path_pub = self.create_publisher(Path, "/pp_path", 10)
         # self.map_pub = self.create_publisher(OccupancyGrid, "/a_star/visited_map", 10)
 
+        self.is_antiClockwise = self.get_parameter("is_antiClockwise").get_parameter_value().string_value
         self.map_ = None
         # self.visited_map_ = OccupancyGrid()
 
@@ -140,9 +143,28 @@ class AStarPlanner(Node):
                 break
             
             # Explore neighbors
+            # for dir_x, dir_y in explore_directions:
+            #     new_node: GraphNode = active_node + (dir_x, dir_y)
             for dir_x, dir_y in explore_directions:
                 new_node: GraphNode = active_node + (dir_x, dir_y)
-                
+
+                # Transform the grid cell to world coordinates
+                world_pose = self.grid_to_world(new_node)
+
+                try:
+                    # Transform point into base_link frame
+                    transform = self.tf_buffer.lookup_transform("base_link", self.map_.header.frame_id, rclpy.time.Time())
+                    transformed = do_transform_pose(world_pose, transform)
+                    x_in_base = transformed.position.x
+                except (LookupException, Exception) as e:
+                    self.get_logger().warn(f"TF failed: {e}")
+                    continue
+
+                # Reject points behind the car
+                if x_in_base < 0:
+                    visited_nodes.add(new_node)
+                    continue
+
                 # if new_node.cost == 0: # if the node is newely created so we set its value with its value in the map "my addition"
                 #     new_node.cost = self.map_.data[self.pose_to_cell(new_node)] # my addition
 
@@ -174,7 +196,8 @@ class AStarPlanner(Node):
             path.poses.append(last_pose_stamped)
             active_node = active_node.prev
 
-        path.poses.reverse()
+        if self.is_antiClockwise == False:
+            path.poses.reverse()
         return path
 
     def manhattan_distance(self, node: GraphNode, goal_node: GraphNode):

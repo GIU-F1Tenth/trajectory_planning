@@ -1,4 +1,5 @@
 csv_path_pub:
   ros__parameters:
     path_topic: "/pp_path"
-    csv_path: "/my_ws/src/trajectory_planning/path/sansibarstr_out.csv"
+    csv_path: "/home/ubuntu/giu_f1tenth_ws/software/src/planning/trajectory_planning/path/mansour_3_out.csv"
+    speed_factor: 1.01

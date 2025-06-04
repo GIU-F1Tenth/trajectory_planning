@@ -8,7 +8,6 @@ setup(
     packages=find_packages(exclude=['test']),
     data_files=[
         ('share/' + package_name + '/launch', ['launch/csv_racingline_publisher.launch.py']),
-        ('share/' + package_name + '/config', ['config/csv_pub_config.yaml']),
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
