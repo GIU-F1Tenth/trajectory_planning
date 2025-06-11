@@ -45,11 +45,12 @@ class AstarLookahead(Node):
         self.declare_parameter("is_antiClockwise", False)
         self.declare_parameter("path_topic", "")
         self.declare_parameter("lookahead_distance", 0.0)
+        self.declare_parameter("lookahead_marker_topic", "")
 
         self.is_antiClockwise = self.get_parameter("is_antiClockwise").get_parameter_value().bool_value
         self.path_topic = self.get_parameter("path_topic").get_parameter_value().string_value
         self.lookahead_distance = self.get_parameter("lookahead_distance").get_parameter_value().double_value
-
+        self.marker_pub_topic = self.get_parameter("lookahead_marker_topic").get_parameter_value().string_value
 
         self.path_sub = self.create_subscription(Path, self.path_topic, self.path_update_cb, 10)
 
@@ -58,7 +59,7 @@ class AstarLookahead(Node):
         self.timer = self.create_timer(0.005, self.get_pose)  # 50 Hz
         self.path = [] # a tuple of (x, y, v) 
 
-        self.lookahead_marker_pub = self.create_publisher(Marker, "/astar_lookahead_marker", 10)
+        self.lookahead_marker_pub = self.create_publisher(Marker, self.marker_pub_topic, 10)
         self.lookahead_circle_pub = self.create_publisher(Marker, "/astar_lookahead_circle", 10)
 
     def path_update_cb(self, msg:Path):
