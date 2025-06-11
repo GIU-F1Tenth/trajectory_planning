@@ -1,0 +1,5 @@
+astar_lookahead_pub_node:
+  ros__parameters:
+    lookahead_distance: 3.5
+    path_topic: "pp_path"
+    is_antiClockwise: False 
