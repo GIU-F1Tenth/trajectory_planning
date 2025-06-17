@@ -8,11 +8,13 @@ import math
 import csv
 import os
 from ackermann_msgs.msg import AckermannDriveStamped
-from pynput import keyboard
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
 import numpy as np
+from std_msgs.msg import Bool
 from tf2_ros import Buffer, TransformListener
+from nav2_msgs.action import ComputePathToPose
+from rclpy.action import ActionClient
 
 def euler_from_quaternion(quaternion):
     """
@@ -46,12 +48,13 @@ class AstarLookahead(Node):
         self.declare_parameter("path_topic", "")
         self.declare_parameter("lookahead_distance", 0.0)
         self.declare_parameter("lookahead_marker_topic", "")
+        self.declare_parameter("object_detected_topic", "/tmp/obj_detected")
 
         self.is_antiClockwise = self.get_parameter("is_antiClockwise").get_parameter_value().bool_value
         self.path_topic = self.get_parameter("path_topic").get_parameter_value().string_value
         self.lookahead_distance = self.get_parameter("lookahead_distance").get_parameter_value().double_value
         self.marker_pub_topic = self.get_parameter("lookahead_marker_topic").get_parameter_value().string_value
-
+        self.obj_detected_topic = self.get_parameter("object_detected_topic").get_parameter_value().string_value
         self.path_sub = self.create_subscription(Path, self.path_topic, self.path_update_cb, 10)
 
         self.tf_buffer = Buffer()
@@ -61,6 +64,31 @@ class AstarLookahead(Node):
 
         self.lookahead_marker_pub = self.create_publisher(Marker, self.marker_pub_topic, 10)
         self.lookahead_circle_pub = self.create_publisher(Marker, "/astar_lookahead_circle", 10)
+        self.path_publisher = self.create_publisher(Path, "/pp_path", 10)
+        self.obj_detected_sub = self.create_subscription(Bool, self.obj_detected_topic, self.create_path, 10)
+        self._action_client = ActionClient(self, ComputePathToPose, 'compute_path_to_pose')
+        self.goal_sent = False
+
+    def create_path(self, msg: Bool): 
+        if not msg.data:
+            return 
+        marker = self.marker
+        goal_msg = ComputePathToPose.Goal()
+
+        # Create a PoseStamped message for the goal
+        goal_pose = PoseStamped()
+        goal_pose.header.frame_id = marker.header.frame_id
+        goal_pose.header.stamp = self.get_clock().now().to_msg()
+        goal_pose.pose = marker.pose
+
+        # Assign the goal pose
+        goal_msg.goal = goal_pose
+
+        # Wait for action server and send goal
+        self._action_client.wait_for_server()
+        self._send_goal_future = self._action_client.send_goal_async(goal_msg)
+        self._send_goal_future.add_done_callback(self.goal_response_callback)
+        self.goal_sent = True
 
     def path_update_cb(self, msg:Path):
         self.path.clear() # to clear the path
@@ -75,7 +103,7 @@ class AstarLookahead(Node):
             now = rclpy.time.Time()
             transform = self.tf_buffer.lookup_transform(
                 'map',      # target_frame
-                'ego_racecar/base_link',    # source_frame (your base_frame)
+                'laser',    # source_frame (your base_frame)
                 now,
                 timeout=rclpy.duration.Duration(seconds=0.5)
             )
@@ -143,8 +171,8 @@ class AstarLookahead(Node):
         marker = Marker()
         marker.header.frame_id = 'map'  # or 'map' depending on your frame
         marker.header.stamp = self.get_clock().now().to_msg()
-        marker.ns = "lookahead"
-        marker.id = 0
+        marker.ns = "astar_lookahead"
+        marker.id = 2
         marker.type = Marker.SPHERE
         marker.action = Marker.ADD
         marker.pose.position.x = point[0]
@@ -159,13 +187,39 @@ class AstarLookahead(Node):
         marker.color.g = 0.0
         marker.color.b = 0.0
         self.lookahead_marker_pub.publish(marker)
+        if self.goal_sent:
+            return
+        
+        self.marker = marker
+
+    def goal_response_callback(self, future):
+        goal_handle = future.result()
+        if not goal_handle.accepted:
+            self.get_logger().warn('Goal was rejected by Nav2.')
+            self.goal_sent = False
+            return
+
+        self._get_result_future = goal_handle.get_result_async()
+        self._get_result_future.add_done_callback(self.get_result_callback)
+        
+    def get_result_callback(self, future):
+        result = future.result().result
+            
+        if result.path: 
+            for pose_stamped in result.path.poses:
+                pose_stamped.pose.orientation.w = 0.0
+            result.path.poses.reverse()
+            self.path_publisher.publish(result.path)
+        else:
+            self.get_logger().warn("No path returned in result")
+        self.goal_sent = False
 
     def publish_lookahead_circle(self, x, y):
         marker = Marker()
         marker.header.frame_id = 'map'  # or 'map' if you're using that
         marker.header.stamp = self.get_clock().now().to_msg()
-        marker.ns = "lookahead"
-        marker.id = 1
+        marker.ns = "astar_lookahead"
+        marker.id = 3
         marker.type = Marker.LINE_STRIP
         marker.action = Marker.ADD
         marker.pose.orientation.w = 1.0

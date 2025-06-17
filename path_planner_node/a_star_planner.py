@@ -4,6 +4,7 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid, Path
 from geometry_msgs.msg import PoseStamped, Pose, PointStamped
+from visualization_msgs.msg import Marker
 from rclpy.qos import QoSProfile, DurabilityPolicy
 from tf2_ros import Buffer, TransformListener, LookupException
 from queue import PriorityQueue
@@ -49,7 +50,7 @@ class AStarPlanner(Node):
         #     PoseStamped, "/goal_pose", self.goal_callback, 10
         # )
         self.point_sub = self.create_subscription(
-            PointStamped, "/clicked_point", self.point_callback, 10
+            Marker, "/astar_lookahead_marker", self.point_callback, 10
         )
         self.path_pub = self.create_publisher(Path, "/pp_path", 10)
         # self.map_pub = self.create_publisher(OccupancyGrid, "/a_star/visited_map", 10)
@@ -57,7 +58,35 @@ class AStarPlanner(Node):
         self.is_antiClockwise = self.get_parameter("is_antiClockwise").get_parameter_value().string_value
         self.map_ = None
         # self.visited_map_ = OccupancyGrid()
-
+        if self.map_ is None:
+            self.get_logger().error("No map received!")
+            return
+        # self.visited_map_.data = [-1] * (self.visited_map_.info.height * self.visited_map_.info.width)
+        
+        pose = PoseStamped()
+        pose.pose.position.x = marker.pose.position.x
+        pose.pose.position.y = marker.pose.position.y
+        
+        try:
+            map_to_base_tf = self.tf_buffer.lookup_transform(
+                self.map_.header.frame_id, "laser", rclpy.time.Time()
+            )
+        except LookupException:
+            self.get_logger().error("Could not transform from map to base_link")
+            return
+        
+        map_to_base_pose = Pose()
+        map_to_base_pose.position.x = map_to_base_tf.transform.translation.x
+        map_to_base_pose.position.y = map_to_base_tf.transform.translation.y
+        map_to_base_pose.orientation = map_to_base_tf.transform.rotation
+        
+        path = self.plan(map_to_base_pose, pose.pose)
+        if path.poses:
+            self.get_logger().info("Shortest path found!")
+            self.path_pub.publish(path)
+        else:
+            self.get_logger().warn("No path")
+                                   
     def map_callback(self, map_msg: OccupancyGrid):
         self.map_ = map_msg
         # self.map_ = self.create_cspace(map_msg)
@@ -65,28 +94,29 @@ class AStarPlanner(Node):
         # self.visited_map_.info = map_msg.info
         # self.visited_map_.data = [-1] * (map_msg.info.height * map_msg.info.width)
 
-    def point_callback(self, point: PointStamped):
+    def point_callback(self, marker: Marker):
         if self.map_ is None:
             self.get_logger().error("No map received!")
             return
-
         # self.visited_map_.data = [-1] * (self.visited_map_.info.height * self.visited_map_.info.width)
+        
         pose = PoseStamped()
-        pose.pose.position.x = point.point.x
-        pose.pose.position.y = point.point.y
+        pose.pose.position.x = marker.pose.position.x
+        pose.pose.position.y = marker.pose.position.y
+        
         try:
             map_to_base_tf = self.tf_buffer.lookup_transform(
-                self.map_.header.frame_id, "base_link", rclpy.time.Time()
+                self.map_.header.frame_id, "laser", rclpy.time.Time()
             )
         except LookupException:
             self.get_logger().error("Could not transform from map to base_link")
             return
-
+        
         map_to_base_pose = Pose()
         map_to_base_pose.position.x = map_to_base_tf.transform.translation.x
         map_to_base_pose.position.y = map_to_base_tf.transform.translation.y
         map_to_base_pose.orientation = map_to_base_tf.transform.rotation
-
+        
         path = self.plan(map_to_base_pose, pose.pose)
         if path.poses:
             self.get_logger().info("Shortest path found!")

@@ -13,7 +13,7 @@ import numpy as np
 class PathPublisher(Node):
     def __init__(self):
         super().__init__("csv_path_pub")
-        self.declare_parameter("path_topic", "/pp_path")
+        self.declare_parameter("path_topic", "/tmp/csv_pp_path")
         self.declare_parameter("csv_path", "/home/ubuntu/giu_f1tenth_ws/software/src/planning/trajectory_planning/path/mansour_3_out.csv")
         self.declare_parameter("speed_factor", 1.01)
 
@@ -23,7 +23,6 @@ class PathPublisher(Node):
         self.path_publisher = self.create_publisher(Path, self.path_topic, 10)
         self.path = self.load_path_from_csv(self.csv_path)
         self.publish_path()
-        self.get_logger().info("The path is loaded ..")
 
     def load_path_from_csv(self, csv_path):
         path = []
@@ -48,8 +47,11 @@ class PathPublisher(Node):
             pose.pose.position.y = point[1]
             pose.pose.orientation.w = point[2] * self.speed_factor # velocity
             path_msg.poses.append(pose)
+            self.get_logger().info(f"Appended point {idx + 1}")
+        
+        for i in range(1000):
+            self.get_logger().info("The path is loaded ..")
             self.path_publisher.publish(path_msg)
-            self.get_logger().info(f"Published point {idx + 1}")
 
 def main(args=None):
     rclpy.init(args=args)

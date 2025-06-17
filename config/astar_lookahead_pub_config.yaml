@@ -1,6 +1,6 @@
 astar_lookahead_pub_node:
   ros__parameters:
-    lookahead_distance: 3.5
-    path_topic: "pp_path"
+    lookahead_distance: 4.5
+    path_topic: "/tmp/csv_pp_path"
     lookahead_marker_topic: "astar_lookahead_marker"
     is_antiClockwise: False 

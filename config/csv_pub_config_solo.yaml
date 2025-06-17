@@ -1,5 +1,5 @@
 csv_path_pub:
   ros__parameters:
-    path_topic: "/tmp/csv_pp_path"
+    path_topic: "/pp_path" # "csv_pp_path"
     csv_path: "/home/ubuntu/giu_f1tenth_ws/software/src/planning/trajectory_planning/path/cluj_napoca_berlin_out.csv"
     speed_factor: 1.01
