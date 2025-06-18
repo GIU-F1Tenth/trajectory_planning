@@ -49,9 +49,8 @@ class PathPublisher(Node):
             path_msg.poses.append(pose)
             self.get_logger().info(f"Appended point {idx + 1}")
         
-        for i in range(1000):
-            self.get_logger().info("The path is loaded ..")
-            self.path_publisher.publish(path_msg)
+        self.get_logger().info("The path is loaded ..")
+        self.path_publisher.publish(path_msg)
 
 def main(args=None):
     rclpy.init(args=args)

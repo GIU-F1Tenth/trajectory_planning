@@ -64,14 +64,15 @@ class AstarLookahead(Node):
 
         self.lookahead_marker_pub = self.create_publisher(Marker, self.marker_pub_topic, 10)
         self.lookahead_circle_pub = self.create_publisher(Marker, "/astar_lookahead_circle", 10)
-        self.path_publisher = self.create_publisher(Path, "/pp_path", 10)
-        self.obj_detected_sub = self.create_subscription(Bool, self.obj_detected_topic, self.create_path, 10)
+        self.path_publisher = self.create_publisher(Path, "/tmp/astar_pp_path", 10)
+        # self.obj_detected_sub = self.create_subscription(Bool, self.obj_detected_topic, self.create_path, 10)
         self._action_client = ActionClient(self, ComputePathToPose, 'compute_path_to_pose')
         self.goal_sent = False
+        self.marker = None
 
     def create_path(self, msg: Bool): 
-        if not msg.data:
-            return 
+        if not msg.data or not self.marker:
+            return
         marker = self.marker
         goal_msg = ComputePathToPose.Goal()
 
@@ -124,6 +125,9 @@ class AstarLookahead(Node):
                 self.get_logger().warn("No lookahead point found go ")
             else:
                 self.publish_lookahead_marker(lookahead_point)
+            msg = Bool()
+            msg.data = True
+            self.create_path(msg)
 
         except Exception as e:
             self.get_logger().warn(f"Transform not available: {e}")
@@ -208,7 +212,7 @@ class AstarLookahead(Node):
         if result.path: 
             for pose_stamped in result.path.poses:
                 pose_stamped.pose.orientation.w = 0.0
-            result.path.poses.reverse()
+            # result.path.poses.reverse()
             self.path_publisher.publish(result.path)
         else:
             self.get_logger().warn("No path returned in result")
