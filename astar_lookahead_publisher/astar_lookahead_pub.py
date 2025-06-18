@@ -45,22 +45,22 @@ class AstarLookahead(Node):
         super().__init__("astar_lookahead_pub_node")
 
         self.declare_parameter("is_antiClockwise", False)
-        self.declare_parameter("path_topic", "")
         self.declare_parameter("lookahead_distance", 0.0)
         self.declare_parameter("lookahead_marker_topic", "")
         self.declare_parameter("object_detected_topic", "/tmp/obj_detected")
+        self.declare_parameter("csv_path", "")   
 
         self.is_antiClockwise = self.get_parameter("is_antiClockwise").get_parameter_value().bool_value
-        self.path_topic = self.get_parameter("path_topic").get_parameter_value().string_value
         self.lookahead_distance = self.get_parameter("lookahead_distance").get_parameter_value().double_value
         self.marker_pub_topic = self.get_parameter("lookahead_marker_topic").get_parameter_value().string_value
         self.obj_detected_topic = self.get_parameter("object_detected_topic").get_parameter_value().string_value
-        self.path_sub = self.create_subscription(Path, self.path_topic, self.path_update_cb, 10)
+        self.csv_path = self.get_parameter("csv_path").get_parameter_value().string_value
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.timer = self.create_timer(0.005, self.get_pose)  # 50 Hz
         self.path = [] # a tuple of (x, y, v) 
+        self.path = self.load_path_from_csv(self.csv_path_topic)
 
         self.lookahead_marker_pub = self.create_publisher(Marker, self.marker_pub_topic, 10)
         self.lookahead_circle_pub = self.create_publisher(Marker, "/astar_lookahead_circle", 10)
@@ -69,6 +69,15 @@ class AstarLookahead(Node):
         self._action_client = ActionClient(self, ComputePathToPose, 'compute_path_to_pose')
         self.goal_sent = False
         self.marker = None
+
+    def load_path_from_csv(self, csv_path):
+        path = []
+        with open(csv_path, newline='') as csvfile:
+            reader = csv.reader(csvfile)
+            for row in reader:
+                x, y, v = float(row[0]), float(row[1]), float(row[2])
+                path.append((x, y, v))
+        return path
 
     def create_path(self, msg: Bool): 
         if not msg.data or not self.marker:
