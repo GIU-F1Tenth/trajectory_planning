@@ -58,9 +58,9 @@ class AstarLookahead(Node):
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
-        self.timer = self.create_timer(0.005, self.get_pose)  # 50 Hz
+        self.timer = self.create_timer(0.001, self.get_pose)  # 500 Hz
         self.path = [] # a tuple of (x, y, v) 
-        self.path = self.load_path_from_csv(self.csv_path_topic)
+        self.path = self.load_path_from_csv(self.csv_path)
 
         self.lookahead_marker_pub = self.create_publisher(Marker, self.marker_pub_topic, 10)
         self.lookahead_circle_pub = self.create_publisher(Marker, "/astar_lookahead_circle", 10)
