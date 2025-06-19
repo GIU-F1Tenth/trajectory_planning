@@ -2,3 +2,5 @@ lookahead_to_path_planner:
   ros__parameters:
     astar_lookahead_marker_topic: "astar_lookahead_marker"
     compute_path_to_pose_topic: "compute_path_to_pose"
+    is_antiClockwise: False 
+    

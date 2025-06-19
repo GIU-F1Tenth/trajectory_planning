@@ -4,7 +4,7 @@ from rclpy.node import Node
 from visualization_msgs.msg import Marker
 from nav2_msgs.action import ComputePathToPose
 from geometry_msgs.msg import PoseStamped
-
+from std_msgs.msg import Bool
 from rclpy.action import ActionClient
 
 
@@ -28,6 +28,7 @@ class LookaheadToPathPlanner(Node):
 
         # Action client for ComputePathToPose
         self._action_client = ActionClient(self, ComputePathToPose, self.compute_path_to_pose_topic)
+        self.goal_sent = False
 
     def marker_callback(self, msg: Marker):
         # Wait for the action server to become available
@@ -50,7 +51,18 @@ class LookaheadToPathPlanner(Node):
 
         # Send the goal
         self.get_logger().info(f"Sending goal to x={goal_pose.pose.position.x}, y={goal_pose.pose.position.y}")
-        self._action_client.send_goal_async(goal_msg)
+        send_goal_future = self._action_client.send_goal_async(goal_msg)
+        send_goal_future.add_done_callback(self.goal_response_callback)
+        
+    def goal_response_callback(self, future):
+        goal_handle = future.result()
+        if not goal_handle.accepted:
+            self.get_logger().warn('Goal was rejected by Nav2.')
+            self.goal_sent = False
+            return
+
+        self._get_result_future = goal_handle.get_result_async()
+        self._get_result_future.add_done_callback(self.get_result_callback)
 
 def main(args=None):
     rclpy.init(args=args)

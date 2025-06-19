@@ -2,5 +2,5 @@ astar_lookahead_pub_node:
   ros__parameters:
     lookahead_distance: 3.5
     lookahead_marker_topic: "astar_lookahead_marker"
-    is_antiClockwise: False 
     csv_path: "/home/ubuntu/giu_f1tenth_ws/software/src/planning/trajectory_planning/path/cluj_napoca_berlin_out.csv"
+    astar_pp_path: "/tmp/astar_pp_path"
