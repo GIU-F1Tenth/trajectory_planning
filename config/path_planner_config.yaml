@@ -1,0 +1,37 @@
+path_planner:
+  ros__parameters:
+    # Path planning constants
+    constants:
+      # Walkability threshold for occupancy grid cells
+      walkable_threshold: 50
+      
+      # Padding around obstacles (number of cells)
+      padding: 5
+      
+      # Cost map weight for path planning
+      cost_map_weight: 1000
+      
+      # Minimum path length to prevent too short paths
+      min_path_length: 12
+      
+      # Number of poses to truncate from path end
+      poses_to_truncate: 8
+    
+    # Movement directions
+    directions:
+      # Use 4-connected movement (up, down, left, right)
+      use_4_connected: true
+      
+      # Use 8-connected movement (includes diagonals)
+      use_8_connected: false
+    
+    # Path smoothing parameters
+    smoothing:
+      # Enable path smoothing
+      enabled: true
+      
+      # Smoothing iterations
+      iterations: 3
+      
+      # Smoothing weight
+      weight: 0.5
