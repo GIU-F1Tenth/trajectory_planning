@@ -13,9 +13,9 @@ import numpy as np
 class PathPublisher(Node):
     def __init__(self):
         super().__init__("csv_path_pub")
-        self.declare_parameter("path_topic", "/tmp/csv_pp_path")
-        self.declare_parameter("csv_path", "/home/ubuntu/giu_f1tenth_ws/software/src/planning/trajectory_planning/path/mansour_3_out.csv")
-        self.declare_parameter("speed_factor", 1.01)
+        self.declare_parameter("path_topic", "/csv_pp_path")
+        self.declare_parameter("csv_path", "/home/ubuntu/giu_f1tenth_ws/software/src/planning/trajectory_planning/path/cantine.csv")
+        self.declare_parameter("speed_factor", 1.0)
 
         self.csv_path = self.get_parameter("csv_path").get_parameter_value().string_value
         self.path_topic = self.get_parameter("path_topic").get_parameter_value().string_value

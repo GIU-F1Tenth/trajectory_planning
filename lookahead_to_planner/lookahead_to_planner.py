@@ -6,6 +6,7 @@ from nav2_msgs.action import ComputePathToPose
 from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Bool
 from rclpy.action import ActionClient
+from nav_msgs.msg import Path
 
 
 class LookaheadToPathPlanner(Node):
@@ -25,6 +26,8 @@ class LookaheadToPathPlanner(Node):
             self.marker_callback,
             10
         )
+
+        self.path_publisher = self.create_publisher(Path, "/astar_pp_path", 10)
 
         # Action client for ComputePathToPose
         self._action_client = ActionClient(self, ComputePathToPose, self.compute_path_to_pose_topic)
@@ -63,6 +66,19 @@ class LookaheadToPathPlanner(Node):
 
         self._get_result_future = goal_handle.get_result_async()
         self._get_result_future.add_done_callback(self.get_result_callback)
+
+    def get_result_callback(self, future):
+        result = future.result().result
+            
+        if result.path: 
+            for pose_stamped in result.path.poses:
+                pose_stamped.pose.orientation.w = 0.0
+            # result.path.poses.reverse()
+            self.path_publisher.publish(result.path)
+        else:
+            self.get_logger().warn("No path returned in result")
+        self.goal_sent = False
+
 
 def main(args=None):
     rclpy.init(args=args)

@@ -1,4 +1,4 @@
-lookahead_to_path_planner:
+astar_lookahead_pub_node:
   ros__parameters:
     astar_lookahead_marker_topic: "astar_lookahead_marker"
     compute_path_to_pose_topic: "compute_path_to_pose"
