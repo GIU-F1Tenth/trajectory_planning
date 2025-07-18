@@ -1,6 +1,14 @@
-astar_lookahead_pub_node:
+lookahead_to_path_planner:
   ros__parameters:
+    # Topic for receiving lookahead markers
     astar_lookahead_marker_topic: "astar_lookahead_marker"
+    
+    # Topic for Nav2 path computation action server
     compute_path_to_pose_topic: "compute_path_to_pose"
-    is_antiClockwise: False 
+    
+    # Topic for publishing computed paths
+    output_path_topic: "/astar_pp_path"
+    
+    # Whether to use anticlockwise path traversal
+    is_antiClockwise: false 
     

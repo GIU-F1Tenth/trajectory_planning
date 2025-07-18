@@ -1,6 +1,53 @@
 astar_lookahead_pub_node:
   ros__parameters:
+    # Lookahead distance for path following (meters)
     lookahead_distance: 3.5
+    
+    # Topic name for publishing lookahead markers
     lookahead_marker_topic: "astar_lookahead_marker"
-    csv_path: "/home/ubuntu/giu_f1tenth_ws/software/src/planning/trajectory_planning/path/cluj_napoca_berlin_out.csv"
+    
+    # Path to the CSV file containing waypoints
+    csv_path: "/home/fam/Desktop/F1Tenth/Repos/trajectory_planning/path/cluj_napoca_berlin_out.csv"
+    
+    # Topic name for publishing A* path planner path
     astar_pp_path: "/tmp/astar_pp_path"
+    
+    # Transform frames
+    target_frame: "map"
+    source_frame: "laser"
+    
+    # Timer frequency (Hz)
+    timer_frequency: 1000.0
+    
+    # Marker visualization parameters
+    marker:
+      # Marker sphere scale
+      scale_x: 0.3
+      scale_y: 0.3
+      scale_z: 0.3
+      
+      # Marker colors (RGBA)
+      color_r: 1.0
+      color_g: 0.0
+      color_b: 0.0
+      color_a: 1.0
+      
+      # Marker position z-offset
+      z_offset: 0.1
+    
+    # Lookahead circle visualization parameters
+    circle:
+      # Line thickness for circle visualization
+      line_thickness: 0.03
+      
+      # Circle color (RGBA)
+      color_r: 0.0
+      color_g: 1.0
+      color_b: 0.0
+      color_a: 1.0
+      
+      # Circle resolution (number of points)
+      resolution: 60
+      
+      # Circle z-offset
+      z_offset: 0.05

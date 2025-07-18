@@ -16,14 +16,17 @@ setup(
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
         # Include config files
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
+        # Include path files
+        (os.path.join('share', package_name, 'path'), glob('path/*.csv')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    author='Karim',
+    author='Fam Shihata',
+    author_email='fam@awadlouis.com',
     maintainer='Fam Shihata',
     maintainer_email='fam@awadlouis.com',
-    description='GIU F1Tenth Car\'s trajectory planning package',
-    license='TODO: License declaration',
+    description='A comprehensive ROS2 package for autonomous vehicle trajectory planning and path following',
+    license='MIT',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
