@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""
+Pure Pursuit Controller v2
+
+This module implements an advanced pure pursuit path following controller
+with obstacle avoidance capabilities for autonomous vehicle navigation.
+"""
 
 import math
 import rclpy
@@ -12,11 +18,16 @@ from nav_msgs.msg import Path, Odometry, GridCells, OccupancyGrid
 from geometry_msgs.msg import Point, PointStamped, Twist, Vector3, Pose, Quaternion
 from tf2_ros import TransformListener, Buffer
 
+
 def euler_from_quaternion(quaternion):
     """
-    Converts quaternion (w in last place) to euler roll, pitch, yaw
-    quaternion = [x, y, z, w]
-    Bellow should be replaced when porting for ROS 2 Python tf_conversions is done.
+    Convert quaternion to euler angles.
+
+    Args:
+        quaternion (list): Quaternion [x, y, z, w]
+
+    Returns:
+        tuple: Euler angles (roll, pitch, yaw) in radians
     """
     x = quaternion[0]
     y = quaternion[1]
@@ -36,17 +47,32 @@ def euler_from_quaternion(quaternion):
 
     return roll, pitch, yaw
 
+
 class PurePursuit(Node):
+    """
+    Advanced Pure Pursuit Path Following Controller.
+
+    This node implements a pure pursuit algorithm for path following with
+    advanced features including obstacle avoidance, dynamic speed control,
+    and configurable field-of-view based safety systems.
+    """
+
     def __init__(self):
         """
-        Class constructor
+        Initialize the Pure Pursuit controller.
+
+        Sets up all parameters, subscribers, publishers, and internal state variables.
         """
         super().__init__("pure_pursuit")
 
-        self.declare_parameter('pure_pursuit_lookahead_publisher', "/pure_pursuit/lookahead")
-        self.declare_parameter('pure_pursuit_fov_cells_publisher', "/pure_pursuit/fov_cells")
-        self.declare_parameter('pure_pursuit_close_wall_cells_publisher', "/pure_pursuit/close_wall_cells")
-        self.declare_parameter('pure_pursuit_path_subscriber', "/pure_pursuit/path")
+        self.declare_parameter(
+            'pure_pursuit_lookahead_publisher', "/pure_pursuit/lookahead")
+        self.declare_parameter(
+            'pure_pursuit_fov_cells_publisher', "/pure_pursuit/fov_cells")
+        self.declare_parameter(
+            'pure_pursuit_close_wall_cells_publisher', "/pure_pursuit/close_wall_cells")
+        self.declare_parameter(
+            'pure_pursuit_path_subscriber', "/pure_pursuit/path")
         self.declare_parameter('pure_pursuit_enabled', "/pure_pursuit/enabled")
         self.declare_parameter('pure_pursuit_lookahead_distance', 0.18)
         self.declare_parameter('pure_pursuit_wheel_base', 0.16)
@@ -55,58 +81,83 @@ class PurePursuit(Node):
         self.declare_parameter('pure_pursuit_turn_speed_kp', 1.25)
         self.declare_parameter('pure_pursuit_distance_tolerance', 0.1)
         self.declare_parameter('pure_pursuit_obstacle_avoidance_gain', 0.3)
-        self.declare_parameter('pure_pursuit_obstacle_avoidance_max_slow_down_distance', 0.16)
-        self.declare_parameter('pure_pursuit_obstacle_avoidance_min_slow_down_distance', 0.12)
-        self.declare_parameter('pure_pursuit_obstacle_avoidance_min_slow_down_factor', 0.25)
+        self.declare_parameter(
+            'pure_pursuit_obstacle_avoidance_max_slow_down_distance', 0.16)
+        self.declare_parameter(
+            'pure_pursuit_obstacle_avoidance_min_slow_down_distance', 0.12)
+        self.declare_parameter(
+            'pure_pursuit_obstacle_avoidance_min_slow_down_factor', 0.25)
         self.declare_parameter('pure_pursuit_fov', 200)
         self.declare_parameter('pure_pursuit_fov_distance', 25)
         self.declare_parameter('pure_pursuit_fov_deadzone', 80)
         self.declare_parameter('pure_pursuit_small_fov', 300)
         self.declare_parameter('pure_pursuit_small_fov_distance', 10)
-    
+
         # Set if in debug mode
         self.is_in_debug_mode = (
-            self.has_parameter("~debug") and self.get_parameter("~debug").value == "true"
+            self.has_parameter("~debug") and self.get_parameter(
+                "~debug").value == "true"
         )
 
         # Publishers
         self.cmd_vel: Publisher = self.create_publisher(Twist, "/cmd_vel", 10)
         self.lookahead_pub: Publisher = self.create_publisher(
-            PointStamped, self.get_parameter('pure_pursuit_lookahead_publisher').value, 10
+            PointStamped, self.get_parameter(
+                'pure_pursuit_lookahead_publisher').value, 10
         )
 
         if self.is_in_debug_mode:
             self.fov_cells_pub: Publisher = self.create_publisher(
-                GridCells, self.get_parameter('pure_pursuit_fov_cells_publisher').value, 100
+                GridCells, self.get_parameter(
+                    'pure_pursuit_fov_cells_publisher').value, 100
             )
             self.close_wall_cells_pub: Publisher = self.create_publisher(
-                GridCells, self.get_parameter('pure_pursuit_close_wall_cells_publisher').value, 100
+                GridCells, self.get_parameter(
+                    'pure_pursuit_close_wall_cells_publisher').value, 100
             )
 
         # Subscribers
-        self.create_subscription(Odometry, "/ego_racecar/odom", self.update_odometry, 10)
+        self.create_subscription(
+            Odometry, "/ego_racecar/odom", self.update_odometry, 10)
         self.create_subscription(OccupancyGrid, "/map", self.update_map, 10)
-        self.create_subscription(Path, self.get_parameter('pure_pursuit_path_subscriber').value, self.update_path, 10)
-        self.create_subscription(Bool, self.get_parameter('pure_pursuit_enabled').value, self.update_enabled, 10)
+        self.create_subscription(Path, self.get_parameter(
+            'pure_pursuit_path_subscriber').value, self.update_path, 10)
+        self.create_subscription(Bool, self.get_parameter(
+            'pure_pursuit_enabled').value, self.update_enabled, 10)
 
         # Pure pursuit parameters
-        self.LOOKAHEAD_DISTANCE = self.get_parameter('pure_pursuit_lookahead_distance').get_parameter_value().double_value  # m
-        self.WHEEL_BASE = self.get_parameter('pure_pursuit_wheel_base').get_parameter_value().double_value  # m
-        self.MAX_DRIVE_SPEED = self.get_parameter('pure_pursuit_max_drive_speed').get_parameter_value().double_value  # m/s
-        self.MAX_TURN_SPEED = self.get_parameter('pure_pursuit_max_turn_speed').get_parameter_value().double_value  # rad/s
-        self.TURN_SPEED_KP = self.get_parameter('pure_pursuit_turn_speed_kp').get_parameter_value().double_value
-        self.DISTANCE_TOLERANCE = self.get_parameter('pure_pursuit_distance_tolerance').get_parameter_value().double_value  # m
+        self.LOOKAHEAD_DISTANCE = self.get_parameter(
+            'pure_pursuit_lookahead_distance').get_parameter_value().double_value  # m
+        self.WHEEL_BASE = self.get_parameter(
+            'pure_pursuit_wheel_base').get_parameter_value().double_value  # m
+        self.MAX_DRIVE_SPEED = self.get_parameter(
+            'pure_pursuit_max_drive_speed').get_parameter_value().double_value  # m/s
+        self.MAX_TURN_SPEED = self.get_parameter(
+            'pure_pursuit_max_turn_speed').get_parameter_value().double_value  # rad/s
+        self.TURN_SPEED_KP = self.get_parameter(
+            'pure_pursuit_turn_speed_kp').get_parameter_value().double_value
+        self.DISTANCE_TOLERANCE = self.get_parameter(
+            'pure_pursuit_distance_tolerance').get_parameter_value().double_value  # m
 
         # Obstacle avoidance parameters
-        self.OBSTACLE_AVOIDANCE_GAIN = self.get_parameter('pure_pursuit_obstacle_avoidance_gain').get_parameter_value().double_value
-        self.OBSTACLE_AVOIDANCE_MAX_SLOW_DOWN_DISTANCE = self.get_parameter('pure_pursuit_obstacle_avoidance_max_slow_down_distance').get_parameter_value().double_value  # m
-        self.OBSTACLE_AVOIDANCE_MIN_SLOW_DOWN_DISTANCE = self.get_parameter('pure_pursuit_obstacle_avoidance_min_slow_down_distance').get_parameter_value().double_value  # m
-        self.OBSTACLE_AVOIDANCE_MIN_SLOW_DOWN_FACTOR = self.get_parameter('pure_pursuit_obstacle_avoidance_min_slow_down_factor').get_parameter_value().double_value
-        self.FOV = self.get_parameter('pure_pursuit_fov').get_parameter_value().double_value  # degrees
-        self.FOV_DISTANCE = self.get_parameter('pure_pursuit_fov_distance').get_parameter_value().integer_value  # Number of grid cells
-        self.FOV_DEADZONE = self.get_parameter('pure_pursuit_fov_deadzone').get_parameter_value().double_value  # degrees
-        self.SMALL_FOV = self.get_parameter('pure_pursuit_small_fov').get_parameter_value().double_value  # degrees
-        self.SMALL_FOV_DISTANCE = self.get_parameter('pure_pursuit_small_fov_distance').get_parameter_value().integer_value  # Number of grid cells
+        self.OBSTACLE_AVOIDANCE_GAIN = self.get_parameter(
+            'pure_pursuit_obstacle_avoidance_gain').get_parameter_value().double_value
+        self.OBSTACLE_AVOIDANCE_MAX_SLOW_DOWN_DISTANCE = self.get_parameter(
+            'pure_pursuit_obstacle_avoidance_max_slow_down_distance').get_parameter_value().double_value  # m
+        self.OBSTACLE_AVOIDANCE_MIN_SLOW_DOWN_DISTANCE = self.get_parameter(
+            'pure_pursuit_obstacle_avoidance_min_slow_down_distance').get_parameter_value().double_value  # m
+        self.OBSTACLE_AVOIDANCE_MIN_SLOW_DOWN_FACTOR = self.get_parameter(
+            'pure_pursuit_obstacle_avoidance_min_slow_down_factor').get_parameter_value().double_value
+        self.FOV = self.get_parameter(
+            'pure_pursuit_fov').get_parameter_value().double_value  # degrees
+        self.FOV_DISTANCE = self.get_parameter(
+            'pure_pursuit_fov_distance').get_parameter_value().integer_value  # Number of grid cells
+        self.FOV_DEADZONE = self.get_parameter(
+            'pure_pursuit_fov_deadzone').get_parameter_value().double_value  # degrees
+        self.SMALL_FOV = self.get_parameter(
+            'pure_pursuit_small_fov').get_parameter_value().double_value  # degrees
+        self.SMALL_FOV_DISTANCE = self.get_parameter(
+            'pure_pursuit_small_fov_distance').get_parameter_value().integer_value  # Number of grid cells
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -129,8 +180,10 @@ class PurePursuit(Node):
             transform = self.tf_buffer.lookup_transform(
                 "map", "base_footprint", now
             )
-            trans = (transform.transform.translation.x, transform.transform.translation.y, transform.transform.translation.z)
-            rot = (transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w)
+            trans = (transform.transform.translation.x,
+                     transform.transform.translation.y, transform.transform.translation.z)
+            rot = (transform.transform.rotation.x, transform.transform.rotation.y,
+                   transform.transform.rotation.z, transform.transform.rotation.w)
         except:
             return
 
@@ -235,7 +288,8 @@ class PurePursuit(Node):
 
         # If in debug mode, publish the wall cells
         if self.is_in_debug_mode:
-            self.fov_cells_pub.publish(PathPlanner.get_grid_cells(self.map, fov_cells))
+            self.fov_cells_pub.publish(
+                PathPlanner.get_grid_cells(self.map, fov_cells))
             self.close_wall_cells_pub.publish(
                 PathPlanner.get_grid_cells(self.map, wall_cells)
             )
@@ -302,14 +356,15 @@ class PurePursuit(Node):
         :param linear_speed  [float] [m/s]   The forward linear speed.
         :param angular_speed [float] [rad/s] The angular speed for rotating around the body center.
         """
-        twist = Twist(linear=Vector3(x=linear_speed), angular=Vector3(z=angular_speed))
+        twist = Twist(linear=Vector3(x=linear_speed),
+                      angular=Vector3(z=angular_speed))
         self.cmd_vel.publish(twist)
 
     def stop(self):
         self.send_speed(0.0, 0.0)
 
     def run(self):
-        
+
         # If no pose, stop
         if self.pose is None:
             return
@@ -354,8 +409,10 @@ class PurePursuit(Node):
         self.reversed = abs(self.alpha) > np.pi / 2
 
         # Calculate the lookahead distance and center of curvature
-        lookahead_distance = PurePursuit.distance(x, y, lookahead.x, lookahead.y)
-        radius_of_curvature = float(lookahead_distance / (2 * np.sin(self.alpha)))
+        lookahead_distance = PurePursuit.distance(
+            x, y, lookahead.x, lookahead.y)
+        radius_of_curvature = float(
+            lookahead_distance / (2 * np.sin(self.alpha)))
 
         # Calculate drive speed
         drive_speed = (-1 if self.reversed else 1) * self.MAX_DRIVE_SPEED
@@ -373,7 +430,8 @@ class PurePursuit(Node):
         turn_speed += self.calculate_steering_adjustment()
 
         # Clamp turn speed
-        turn_speed = max(-self.MAX_TURN_SPEED, min(self.MAX_TURN_SPEED, turn_speed))
+        turn_speed = max(-self.MAX_TURN_SPEED,
+                         min(self.MAX_TURN_SPEED, turn_speed))
 
         # Slow down if close to obstacle
         if self.closest_distance < self.OBSTACLE_AVOIDANCE_MAX_SLOW_DOWN_DISTANCE:
@@ -391,12 +449,14 @@ class PurePursuit(Node):
         # Send speed
         self.send_speed(drive_speed, turn_speed)
 
-def main(): 
+
+def main():
     rclpy.init()
     pure_pursuit = PurePursuit()
     rclpy.spin(pure_pursuit)
     pure_pursuit.destroy_node()
     rclpy.shutdown()
+
 
 if __name__ == "__main__":
     PurePursuit().run()

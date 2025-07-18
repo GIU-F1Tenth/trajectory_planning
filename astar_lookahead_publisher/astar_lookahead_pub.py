@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""
+A* Lookahead Publisher Module
+
+This module implements a ROS2 node that publishes lookahead points for A* path planning.
+It reads waypoints from a CSV file and publishes visualization markers for lookahead points
+and circles based on the robot's current position.
+"""
 
 import rclpy
 from rclpy.node import Node
@@ -7,137 +14,163 @@ from geometry_msgs.msg import PoseStamped
 import math
 import csv
 import os
-from ackermann_msgs.msg import AckermannDriveStamped
+# from ackermann_msgs.msg import AckermannDriveStamped
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
 import numpy as np
-from std_msgs.msg import Bool
 from tf2_ros import Buffer, TransformListener
-from nav2_msgs.action import ComputePathToPose
-from rclpy.action import ActionClient
 
-def euler_from_quaternion(quaternion):
-    """
-    Converts quaternion (w in last place) to euler roll, pitch, yaw
-    quaternion = [x, y, z, w]
-    Bellow should be replaced when porting for ROS 2 Python tf_conversions is done.
-    """
-    x = quaternion[0]
-    y = quaternion[1]
-    z = quaternion[2]
-    w = quaternion[3]
-
-    sinr_cosp = 2 * (w * x + y * z)
-    cosr_cosp = 1 - 2 * (x * x + y * y)
-    roll = np.arctan2(sinr_cosp, cosr_cosp)
-
-    sinp = 2 * (w * y - z * x)
-    pitch = np.arcsin(sinp)
-
-    siny_cosp = 2 * (w * z + x * y)
-    cosy_cosp = 1 - 2 * (y * y + z * z)
-    yaw = np.arctan2(siny_cosp, cosy_cosp)
-
-    return roll, pitch, yaw
 
 class AstarLookahead(Node):
+    """
+    A ROS2 node that publishes lookahead points for A* path planning.
+
+    This node reads a CSV file containing waypoints and publishes lookahead markers
+    based on the robot's current position. It also visualizes the lookahead circle
+    and publishes the path for visualization purposes.
+    """
+
     def __init__(self):
+        """
+        Initialize the AstarLookahead node.
+
+        Sets up parameters, subscribers, publishers, and loads the path from CSV.
+        """
         super().__init__("astar_lookahead_pub_node")
 
-        self.declare_parameter("is_antiClockwise", False)
-        self.declare_parameter("path_topic", "")
+        # Initialize parameters with proper declarations and documentation
         self.declare_parameter("lookahead_distance", 0.0)
         self.declare_parameter("lookahead_marker_topic", "")
-        self.declare_parameter("object_detected_topic", "/tmp/obj_detected")
+        self.declare_parameter("csv_path", "")
+        self.declare_parameter("astar_pp_path", "")
+        self.declare_parameter("target_frame", "map")
+        self.declare_parameter("source_frame", "laser")
+        self.declare_parameter("timer_frequency", 1000.0)
 
-        self.is_antiClockwise = self.get_parameter("is_antiClockwise").get_parameter_value().bool_value
-        self.path_topic = self.get_parameter("path_topic").get_parameter_value().string_value
-        self.lookahead_distance = self.get_parameter("lookahead_distance").get_parameter_value().double_value
-        self.marker_pub_topic = self.get_parameter("lookahead_marker_topic").get_parameter_value().string_value
-        self.obj_detected_topic = self.get_parameter("object_detected_topic").get_parameter_value().string_value
-        self.path_sub = self.create_subscription(Path, self.path_topic, self.path_update_cb, 10)
+        # Marker parameters
+        self.declare_parameter("marker.scale_x", 0.3)
+        self.declare_parameter("marker.scale_y", 0.3)
+        self.declare_parameter("marker.scale_z", 0.3)
+        self.declare_parameter("marker.color_r", 1.0)
+        self.declare_parameter("marker.color_g", 0.0)
+        self.declare_parameter("marker.color_b", 0.0)
+        self.declare_parameter("marker.color_a", 1.0)
+        self.declare_parameter("marker.z_offset", 0.1)
 
+        # Circle parameters
+        self.declare_parameter("circle.line_thickness", 0.03)
+        self.declare_parameter("circle.color_r", 0.0)
+        self.declare_parameter("circle.color_g", 1.0)
+        self.declare_parameter("circle.color_b", 0.0)
+        self.declare_parameter("circle.color_a", 1.0)
+        self.declare_parameter("circle.resolution", 60)
+        self.declare_parameter("circle.z_offset", 0.05)
+
+        # Get parameter values
+        self.lookahead_distance = self.get_parameter(
+            "lookahead_distance").get_parameter_value().double_value
+        self.marker_pub_topic = self.get_parameter(
+            "lookahead_marker_topic").get_parameter_value().string_value
+        self.csv_path = self.get_parameter(
+            "csv_path").get_parameter_value().string_value
+        self.astar_pp_path = self.get_parameter(
+            "astar_pp_path").get_parameter_value().string_value
+        self.target_frame = self.get_parameter(
+            "target_frame").get_parameter_value().string_value
+        self.source_frame = self.get_parameter(
+            "source_frame").get_parameter_value().string_value
+        self.timer_frequency = self.get_parameter(
+            "timer_frequency").get_parameter_value().double_value
+
+        # Initialize TF2 buffer and listener for coordinate transformations
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
-        self.timer = self.create_timer(0.005, self.get_pose)  # 50 Hz
-        self.path = [] # a tuple of (x, y, v) 
 
-        self.lookahead_marker_pub = self.create_publisher(Marker, self.marker_pub_topic, 10)
-        self.lookahead_circle_pub = self.create_publisher(Marker, "/astar_lookahead_circle", 10)
-        self.path_publisher = self.create_publisher(Path, "/tmp/astar_pp_path", 10)
-        # self.obj_detected_sub = self.create_subscription(Bool, self.obj_detected_topic, self.create_path, 10)
-        self._action_client = ActionClient(self, ComputePathToPose, 'compute_path_to_pose')
-        self.goal_sent = False
+        # Create timer with configurable frequency
+        timer_period = 1.0 / self.timer_frequency
+        self.timer = self.create_timer(timer_period, self.get_pose)
+
+        # Load path from CSV file
+        self.path = []  # List of tuples (x, y, v) representing waypoints
+        self.path = self.load_path_from_csv(self.csv_path)
+
+        # Create publishers for markers and path
+        self.lookahead_marker_pub = self.create_publisher(
+            Marker, self.marker_pub_topic, 10)
+        self.lookahead_circle_pub = self.create_publisher(
+            Marker, "/astar_lookahead_circle", 10)
+        self.path_publisher = self.create_publisher(
+            Path, self.astar_pp_path, 10)
+
+        # Current marker storage
         self.marker = None
 
-    def create_path(self, msg: Bool): 
-        if not msg.data or not self.marker:
-            return
-        marker = self.marker
-        goal_msg = ComputePathToPose.Goal()
+    def load_path_from_csv(self, csv_path):
+        """
+        Load path waypoints from a CSV file.
 
-        # Create a PoseStamped message for the goal
-        goal_pose = PoseStamped()
-        goal_pose.header.frame_id = marker.header.frame_id
-        goal_pose.header.stamp = self.get_clock().now().to_msg()
-        goal_pose.pose = marker.pose
+        Args:
+            csv_path (str): Path to the CSV file containing waypoints
 
-        # Assign the goal pose
-        goal_msg.goal = goal_pose
-
-        # Wait for action server and send goal
-        self._action_client.wait_for_server()
-        self._send_goal_future = self._action_client.send_goal_async(goal_msg)
-        self._send_goal_future.add_done_callback(self.goal_response_callback)
-        self.goal_sent = True
-
-    def path_update_cb(self, msg:Path):
-        self.path.clear() # to clear the path
-        for i in range(len(msg.poses)):
-            self.path.append((msg.poses[i].pose.position.x, msg.poses[i].pose.position.y, msg.poses[i].pose.orientation.w))
-        if self.is_antiClockwise:
-            self.path.reverse()
-        self.get_logger().info(f"path has been updated...")
+        Returns:
+            list: List of tuples containing (x, y, velocity) for each waypoint
+        """
+        path = []
+        with open(csv_path, newline='') as csvfile:
+            reader = csv.reader(csvfile)
+            for row in reader:
+                x, y, v = float(row[0]), float(row[1]), float(row[2])
+                path.append((x, y, v))
+        return path
 
     def get_pose(self):
+        """
+        Get the current robot pose from TF transforms and update lookahead visualization.
+
+        This method is called periodically by the timer to:
+        1. Look up the transform from map to laser frame
+        2. Publish the lookahead circle visualization
+        3. Find and publish the lookahead point marker
+        """
         try:
             now = rclpy.time.Time()
             transform = self.tf_buffer.lookup_transform(
-                'map',      # target_frame
-                'laser',    # source_frame (your base_frame)
+                self.target_frame,      # target_frame
+                self.source_frame,    # source_frame (your base_frame)
                 now,
                 timeout=rclpy.duration.Duration(seconds=0.5)
             )
 
             trans = transform.transform.translation
-            rot = transform.transform.rotation
 
-            # Convert quaternion to yaw
-            orientation_list = [rot.x, rot.y, rot.z, rot.w]
-            _, _, yaw = euler_from_quaternion(orientation_list)
-
-            # self.get_logger().info(f"Robot Pose - x: {trans.x:.2f}, y: {trans.y:.2f}, yaw: {yaw:.2f}")
             x, y = trans.x, trans.y
-            
+
             self.publish_lookahead_circle(x, y)
-            lookahead_point, closest_point, lookahead_index = self.find_lookahead_point(x, y)
+            lookahead_point, closest_point, lookahead_index = self.find_lookahead_point(
+                x, y)
             if lookahead_point is None:
                 self.get_logger().warn("No lookahead point found go ")
             else:
                 self.publish_lookahead_marker(lookahead_point)
-            msg = Bool()
-            msg.data = True
-            self.create_path(msg)
 
         except Exception as e:
             self.get_logger().warn(f"Transform not available: {e}")
 
-
-
     def find_lookahead_point(self, x, y):
         """
-        This function returns the lookahead distance and the closest point to the car.
-        Returns the index of the lookahead point as a third element.
+        Find the lookahead point on the path based on the robot's current position.
+
+        This function returns the lookahead point, closest point, and lookahead index.
+        It first finds the closest path point to the car, then searches forward from
+        that point to find a point at the specified lookahead distance.
+
+        Args:
+            x (float): Robot's current x position
+            y (float): Robot's current y position
+
+        Returns:
+            tuple: (lookahead_point, closest_point, lookahead_index) or (None, None, None)
+                  if no valid lookahead point is found
         """
 
         closest_idx = 0
@@ -170,8 +203,13 @@ class AstarLookahead(Node):
 
         return None, None, None
 
-
     def publish_lookahead_marker(self, point):
+        """
+        Publish a visualization marker for the lookahead point.
+
+        Args:
+            point (tuple): Lookahead point coordinates (x, y, velocity)
+        """
         marker = Marker()
         marker.header.frame_id = 'map'  # or 'map' depending on your frame
         marker.header.stamp = self.get_clock().now().to_msg()
@@ -191,34 +229,16 @@ class AstarLookahead(Node):
         marker.color.g = 0.0
         marker.color.b = 0.0
         self.lookahead_marker_pub.publish(marker)
-        if self.goal_sent:
-            return
-        
         self.marker = marker
 
-    def goal_response_callback(self, future):
-        goal_handle = future.result()
-        if not goal_handle.accepted:
-            self.get_logger().warn('Goal was rejected by Nav2.')
-            self.goal_sent = False
-            return
-
-        self._get_result_future = goal_handle.get_result_async()
-        self._get_result_future.add_done_callback(self.get_result_callback)
-        
-    def get_result_callback(self, future):
-        result = future.result().result
-            
-        if result.path: 
-            for pose_stamped in result.path.poses:
-                pose_stamped.pose.orientation.w = 0.0
-            # result.path.poses.reverse()
-            self.path_publisher.publish(result.path)
-        else:
-            self.get_logger().warn("No path returned in result")
-        self.goal_sent = False
-
     def publish_lookahead_circle(self, x, y):
+        """
+        Publish a visualization marker showing the lookahead circle around the robot.
+
+        Args:
+            x (float): Robot's current x position
+            y (float): Robot's current y position
+        """
         marker = Marker()
         marker.header.frame_id = 'map'  # or 'map' if you're using that
         marker.header.stamp = self.get_clock().now().to_msg()
@@ -247,12 +267,20 @@ class AstarLookahead(Node):
 
         self.lookahead_circle_pub.publish(marker)
 
+
 def main(args=None):
+    """
+    Main function to initialize and run the AstarLookahead node.
+
+    Args:
+        args: Command line arguments (optional)
+    """
     rclpy.init(args=args)
     node = AstarLookahead()
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
+
 
 if __name__ == "__main__":
     main()
