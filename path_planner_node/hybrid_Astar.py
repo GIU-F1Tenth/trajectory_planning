@@ -156,11 +156,11 @@ class AStarPlanner(Node):
         self.declare_parameter("visited_map_topic", "/visited_map")
         self.declare_parameter("point_topic", "/clicked_point")
         self.declare_parameter("search_angle", 60)  # degrees
-        self.declare_parameter("search_step", 3)  # degrees    
+        self.declare_parameter("search_step", 10)  # degrees    
         self.declare_parameter("vehicle_length", 0.8)  # meters
         self.declare_parameter("velocity", 0.4)  # m/s
         self.declare_parameter("coordinates_tolerance", 1)  # cells
-        self.declare_parameter("yaw_tolerance", 1)  # degrees
+        self.declare_parameter("yaw_tolerance", 5)  # degrees
         self.declare_parameter("min_forward_cost", 2)  # minimum cost for forward movement
         self.declare_parameter("max_forward_cost", 10)  # maximum cost for forward movement
         self.declare_parameter("min_reverse_cost", 40)  # minimum cost for reverse movement
@@ -372,8 +372,8 @@ class AStarPlanner(Node):
                 # theta_dot = (v / length) * tan(delta)
                 # integrate you will get the new position
 
-                x = int(v*np.cos(active_node.theta)/self.map_.info.resolution)
-                y = int(v*np.sin(active_node.theta)/self.map_.info.resolution)
+                x = round(v*np.cos(active_node.theta)/self.map_.info.resolution)
+                y = round(v*np.sin(active_node.theta)/self.map_.info.resolution)
                 theta = (v/length)*np.tan(delta)
                 new_node: GraphNode = active_node + (x, y, theta)
                 
@@ -385,6 +385,7 @@ class AStarPlanner(Node):
                         if old_node.cost > new_cost:
                             old_node.cost = new_cost 
                             old_node.prev = active_node
+                            pending_nodes.put(old_node) # to update the cost in the queue
                     else:    
                         new_node.cost = active_node.cost + cost + \
                             self.map_.data[self.pose_to_cell(new_node)]
