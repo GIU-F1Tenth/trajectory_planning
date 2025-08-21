@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-A* Path Planner Module
+Hybrid A* Path Planner Module
 
-This module implements an A* path planning algorithm for autonomous navigation.
+This module implements an Hybrid A* path planning algorithm for autonomous navigation.
 It subscribes to occupancy grids and goal markers, then computes optimal paths
-using the A* search algorithm.
+using the Hybrid A* search algorithm.
 """
 
 import rclpy
@@ -19,29 +19,62 @@ from std_msgs.msg import Header
 import numpy as np
 from scipy.ndimage import grey_dilation
 from tf2_geometry_msgs.tf2_geometry_msgs import do_transform_pose
+import math
 
+def euler_from_quaternion(quaternion):
+    """
+    Convert quaternion to Euler angles.
+
+    Converts quaternion (w in last place) to euler roll, pitch, yaw.
+    This should be replaced when porting for ROS 2 Python tf_conversions is done.
+
+    Args:
+        quaternion (list): Quaternion as [x, y, z, w]
+
+    Returns:
+        tuple: (roll, pitch, yaw) in radians
+    """
+    x = quaternion[0]
+    y = quaternion[1]
+    z = quaternion[2]
+    w = quaternion[3]
+
+    sinr_cosp = 2 * (w * x + y * z)
+    cosr_cosp = 1 - 2 * (x * x + y * y)
+    roll = np.arctan2(sinr_cosp, cosr_cosp)
+
+    sinp = 2 * (w * y - z * x)
+    pitch = np.arcsin(sinp)
+
+    siny_cosp = 2 * (w * z + x * y)
+    cosy_cosp = 1 - 2 * (y * y + z * z)
+    yaw = np.arctan2(siny_cosp, cosy_cosp)
+
+    return roll, pitch, yaw
 
 class GraphNode:
     """
-    A node in the search graph for A* pathfinding.
+    A node in the search graph for Hybrid A* pathfinding.
 
     Represents a single cell in the occupancy grid with associated costs
-    and heuristic values for the A* algorithm.
+    and heuristic values for the Hybrid A* algorithm.
     """
 
-    def __init__(self, x, y, cost=0, heuristic=0, prev=None):
+    def __init__(self, x, y, theta, cost=0, heuristic=0, prev=None):
         """
         Initialize a graph node.
 
         Args:
             x (int): Grid x-coordinate
             y (int): Grid y-coordinate  
+            theta (float): Yaw orientation in radians
             cost (float): Cost to reach this node from start
             heuristic (float): Heuristic estimate to goal
             prev (GraphNode): Previous node in path
         """
         self.x = x
         self.y = y
+        self.theta = self.normalize_and_discretize_angle(theta)
         self.cost = cost
         self.heuristic = heuristic
         self.prev = prev
@@ -50,21 +83,50 @@ class GraphNode:
         return (self.cost + self.heuristic) < (other.cost + other.heuristic)
 
     def __eq__(self, other):
-        return self.x == other.x and self.y == other.y
+        return self.x == other.x and self.y == other.y and self.theta == other.theta
 
     def __hash__(self):
-        return hash((self.x, self.y))
+        return hash((self.x, self.y, self.theta))
 
     def __add__(self, other):
-        return GraphNode(self.x + other[0], self.y + other[1])
+        return GraphNode(self.x + other[0], self.y + other[1], self.theta + other[2])
+    
+    def __str__(self):   # like toString()
+        return f"({self.x}, {self.y}, {math.degrees(self.theta)})"
+
+    def __repr__(self):  # debug version
+        return f"({self.x}, {self.y}, {math.degrees(self.theta)})"
+
+    def normalize_and_discretize_angle(self, theta, bins=72):
+        """
+        Normalizes an angle to [-π, π] range and discretizes it to 5-degree increments.
+
+        Args:
+            theta (float): Input angle in radians
+            
+        Returns:
+            float: Normalized and discretized angle in radians
+        """
+        # Step 1: Normalize angle to [-π, π] range
+        # Use atan2(sin(theta), cos(theta)) for robust normalization
+        normalized_theta = math.atan2(math.sin(theta), math.cos(theta))
+
+        # Step 2: Convert 10 degrees to radians
+        discretization_step = math.radians(360 / bins)
+
+        # Step 3: Discretize to nearest 10-degree increment
+        # Round to nearest multiple of discretization_step
+        discretized_theta = round(normalized_theta / discretization_step) * discretization_step
+        
+        return discretized_theta
 
 
 class AStarPlanner(Node):
     """
-    A ROS2 node implementing the A* path planning algorithm.
+    A ROS2 node implementing the Hybrid A* path planning algorithm.
 
     This node subscribes to occupancy grids and goal markers, then computes
-    optimal paths using the A* search algorithm. The computed paths are
+    optimal paths using the Hybrid A* search algorithm. The computed paths are
     published for use by path following controllers.
     """
 
@@ -151,7 +213,7 @@ class AStarPlanner(Node):
         if self.map_ is None:
             self.get_logger().error("No map received!")
             return
-        # self.visited_map_.data = [-1] * (self.visited_map_.info.height * self.visited_map_.info.width)
+        self.visited_map_.data = [-1] * (self.visited_map_.info.height * self.visited_map_.info.width)
 
         pose = PoseStamped()
         pose.pose.position.x = marker.pose.position.x
@@ -200,10 +262,11 @@ class AStarPlanner(Node):
         pose = PoseStamped()
         pose.pose.position.x = point.point.x
         pose.pose.position.y = point.point.y
+        pose.pose.orientation = map_to_base_pose.orientation # to make the goal orientation the same as the start orientation
 
         # sending goal pose to the planner
         path = self.plan(map_to_base_pose, pose.pose)
-        if path.poses:
+        if path and path.poses:
             self.get_logger().info("Shortest path found!")
             self.path_pub.publish(path)
         else:
@@ -211,9 +274,23 @@ class AStarPlanner(Node):
 
     def plan(self, start: Pose, goal: Pose):
         # Define possible movement directions
-        explore_directions = [(-1, 0, 10), (1, 0, 10), (-1, 1, 14), (1, 1, 14), (0, -1, 10), (0, 1, 10), (1, -1, 14), (-1, -1, 14)] # my addition for the perfect path
+        # (v, delta, cost) +ve is left
+        explore_directions = []
+        v_forward = 0.3
+        v_reverse = -0.3
 
-        # Priority queue with custom comparison for A* based on cost + heuristic
+        for delta in range(-30, 31, 3):  # -30 to 30 inclusive
+            # cost increases with steering angle magnitude
+            cost = 2 + int(abs(delta) / 30 * (10 - 2))  # min=2 at 0°, max=10 at ±30°
+            explore_directions.append((v_forward, delta, cost))
+
+        for delta in range(-30, 31, 3):
+            # reverse is more expensive overall
+            cost = 40 + int(abs(delta) / 30 * (50 - 40))  # min=40 at 0°, max=50 at ±30°
+            explore_directions.append((v_reverse, delta, cost))
+
+        length = 0.8
+        # Priority queue with custom comparison for Hybrid A* based on cost + heuristic
         pending_nodes = PriorityQueue()
         visited_nodes = {}
         closed_nodes = set()
@@ -222,25 +299,48 @@ class AStarPlanner(Node):
         goal_node = self.world_to_grid(goal)
         start_node.heuristic = self.euclidean_distance(start_node, goal_node)
         pending_nodes.put(start_node)
+        print(f"{start_node}, {goal_node}")
 
         while not pending_nodes.empty() and rclpy.ok():
             active_node: GraphNode = pending_nodes.get()
-
+    
             # Goal found!
             if active_node == goal_node:
-                break
+                path = Path()
+                path.header.frame_id = self.map_.header.frame_id
+                while active_node and active_node.prev and rclpy.ok():
+                    last_pose: Pose = self.grid_to_world(active_node)
+                    last_pose_stamped = PoseStamped()
+                    last_pose_stamped.header.frame_id = self.map_.header.frame_id
+                    last_pose_stamped.pose = last_pose
+                    path.poses.append(last_pose_stamped)
+                    active_node = active_node.prev
 
-            for dir_x, dir_y, cost in explore_directions:
-                new_node: GraphNode = active_node + (dir_x, dir_y)
+                if self.is_antiClockwise == False:
+                    path.poses.reverse()
 
+                print(f"active node: {active_node} goal node: {goal_node}")
+                return path
+            
+            for v, delta, cost in explore_directions:
+                
+                delta = math.radians(delta)
+                
+                # vehicle kinematics model calculate x, y coordinates based on the old theta not from the newly calculated theta 
+                # what we are doing is that we are integrating the velocity x_dot and y_dot over the time step to get the new position assume dt = 1
+                x = int(v*np.cos(active_node.theta)/self.map_.info.resolution)
+                y = int(v*np.sin(active_node.theta)/self.map_.info.resolution)
+                theta = (v/length)*np.tan(delta)
+                new_node: GraphNode = active_node + (x, y, theta)
+                
                 if (new_node not in closed_nodes and self.pose_on_map(new_node) and
                         0 <= self.map_.data[self.pose_to_cell(new_node)] < 99):
-                    if (new_node.x, new_node.y) in visited_nodes :
-                        new_node = visited_nodes[(new_node.x, new_node.y)]
+                    if (new_node.x, new_node.y, new_node.theta) in visited_nodes:
+                        old_node: GraphNode = visited_nodes[(new_node.x, new_node.y, new_node.theta)]
                         new_cost = active_node.cost + cost + self.map_.data[self.pose_to_cell(new_node)]
-                        if new_node.cost > new_cost:
-                            new_node.cost = new_cost 
-                            new_node.prev = active_node
+                        if old_node.cost > new_cost:
+                            old_node.cost = new_cost 
+                            old_node.prev = active_node
                     else:    
                         new_node.cost = active_node.cost + cost + \
                             self.map_.data[self.pose_to_cell(new_node)]
@@ -248,31 +348,19 @@ class AStarPlanner(Node):
                         new_node.heuristic = self.euclidean_distance(
                             new_node, goal_node)
                         pending_nodes.put(new_node)
-                        visited_nodes[(new_node.x, new_node.y)] = new_node
+                        self.get_logger().info(f"adding {new_node} size {pending_nodes.qsize()}")
+                        visited_nodes[(new_node.x, new_node.y, new_node.theta)] = new_node
 
             closed_nodes.add(active_node)
-
             self.visited_map_.data[self.pose_to_cell(active_node)] = -106
             self.map_pub.publish(self.visited_map_)
 
-        path = Path()
-        path.header.frame_id = self.map_.header.frame_id
-        while active_node and active_node.prev and rclpy.ok():
-            last_pose: Pose = self.grid_to_world(active_node)
-            last_pose_stamped = PoseStamped()
-            last_pose_stamped.header.frame_id = self.map_.header.frame_id
-            last_pose_stamped.pose = last_pose
-            path.poses.append(last_pose_stamped)
-            active_node = active_node.prev
-
-        if self.is_antiClockwise == False:
-            path.poses.reverse()
-        return path
+        return None
 
     def manhattan_distance(self, node: GraphNode, goal_node: GraphNode):
         return abs(node.x - goal_node.x) + abs(node.y - goal_node.y)
 
-    def euclidean_distance(selF, node: GraphNode, goal_node: GraphNode):
+    def euclidean_distance(self, node: GraphNode, goal_node: GraphNode):
         return ((node.x - goal_node.x)**2 + (node.y - goal_node.y)**2)**0.5
 
     def pose_on_map(self, node: GraphNode):
@@ -283,7 +371,9 @@ class AStarPlanner(Node):
             (pose.position.x - self.map_.info.origin.position.x) / self.map_.info.resolution)
         grid_y = int(
             (pose.position.y - self.map_.info.origin.position.y) / self.map_.info.resolution)
-        return GraphNode(grid_x, grid_y)
+        q = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
+        roll, pitch, yaw = euler_from_quaternion(q)
+        return GraphNode(grid_x, grid_y, yaw)
 
     def grid_to_world(self, node: GraphNode) -> Pose:
         pose = Pose()
