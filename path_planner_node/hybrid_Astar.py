@@ -272,19 +272,29 @@ class AStarPlanner(Node):
         else:
             self.get_logger().warn("No path found to the goal.")
 
+    def goal_reached(self, node: GraphNode, goal: GraphNode,
+                    pos_tol_cells: int = 1, yaw_tol_rad: float = math.radians(1)):
+        # position tolerance in grid cells
+        if abs(node.x - goal.x) > pos_tol_cells or abs(node.y - goal.y) > pos_tol_cells:
+            return False
+        # orientation tolerance (optional; relax if you only care about position)
+        dtheta = math.atan2(math.sin(node.theta - goal.theta), math.cos(node.theta - goal.theta))
+        return abs(dtheta) <= yaw_tol_rad
+
+
     def plan(self, start: Pose, goal: Pose):
         # Define possible movement directions
         # (v, delta, cost) +ve is left
         explore_directions = []
-        v_forward = 0.3
-        v_reverse = -0.3
+        v_forward = 0.4
+        v_reverse = -0.4
 
-        for delta in range(-30, 31, 3):  # -30 to 30 inclusive
+        for delta in range(-60, 61, 3):  # -60 to 60 inclusive
             # cost increases with steering angle magnitude
             cost = 2 + int(abs(delta) / 30 * (10 - 2))  # min=2 at 0°, max=10 at ±30°
             explore_directions.append((v_forward, delta, cost))
 
-        for delta in range(-30, 31, 3):
+        for delta in range(-60, 61, 3):
             # reverse is more expensive overall
             cost = 40 + int(abs(delta) / 30 * (50 - 40))  # min=40 at 0°, max=50 at ±30°
             explore_directions.append((v_reverse, delta, cost))
@@ -299,16 +309,16 @@ class AStarPlanner(Node):
         goal_node = self.world_to_grid(goal)
         start_node.heuristic = self.euclidean_distance(start_node, goal_node)
         pending_nodes.put(start_node)
-        print(f"{start_node}, {goal_node}")
 
         while not pending_nodes.empty() and rclpy.ok():
             active_node: GraphNode = pending_nodes.get()
     
             # Goal found!
-            if active_node == goal_node:
+            if self.goal_reached(active_node, goal_node):
+                self.get_logger().info(f"active node: {active_node} goal node: {goal_node}")
                 path = Path()
                 path.header.frame_id = self.map_.header.frame_id
-                while active_node and active_node.prev and rclpy.ok():
+                while active_node and rclpy.ok():
                     last_pose: Pose = self.grid_to_world(active_node)
                     last_pose_stamped = PoseStamped()
                     last_pose_stamped.header.frame_id = self.map_.header.frame_id
@@ -319,7 +329,6 @@ class AStarPlanner(Node):
                 if self.is_antiClockwise == False:
                     path.poses.reverse()
 
-                print(f"active node: {active_node} goal node: {goal_node}")
                 return path
             
             for v, delta, cost in explore_directions:
@@ -328,6 +337,11 @@ class AStarPlanner(Node):
                 
                 # vehicle kinematics model calculate x, y coordinates based on the old theta not from the newly calculated theta 
                 # what we are doing is that we are integrating the velocity x_dot and y_dot over the time step to get the new position assume dt = 1
+                # x_dot = v * cos(theta)
+                # y_dot = v * sin(theta)
+                # theta_dot = (v / length) * tan(delta)
+                # integrate you will get the new position
+
                 x = int(v*np.cos(active_node.theta)/self.map_.info.resolution)
                 y = int(v*np.sin(active_node.theta)/self.map_.info.resolution)
                 theta = (v/length)*np.tan(delta)
