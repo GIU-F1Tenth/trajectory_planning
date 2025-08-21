@@ -155,7 +155,17 @@ class AStarPlanner(Node):
         self.declare_parameter("base_frame", "ego_racecar/base_link")
         self.declare_parameter("visited_map_topic", "/visited_map")
         self.declare_parameter("point_topic", "/clicked_point")
-
+        self.declare_parameter("search_angle", 60)  # degrees
+        self.declare_parameter("search_step", 3)  # degrees    
+        self.declare_parameter("vehicle_length", 0.8)  # meters
+        self.declare_parameter("velocity", 0.4)  # m/s
+        self.declare_parameter("coordinates_tolerance", 1)  # cells
+        self.declare_parameter("yaw_tolerance", 1)  # degrees
+        self.declare_parameter("min_forward_cost", 2)  # minimum cost for forward movement
+        self.declare_parameter("max_forward_cost", 10)  # maximum cost for forward movement
+        self.declare_parameter("min_reverse_cost", 40)  # minimum cost for reverse movement
+        self.declare_parameter("max_reverse_cost", 50)  # maximum cost for reverse
+        
         # Get parameter values
         self.is_antiClockwise = self.get_parameter(
             "is_antiClockwise").get_parameter_value().bool_value
@@ -173,7 +183,27 @@ class AStarPlanner(Node):
             "visited_map_topic").get_parameter_value().string_value
         self.point_topic = self.get_parameter(
             "point_topic").get_parameter_value().string_value
-        
+        self.search_angle = self.get_parameter(
+            "search_angle").get_parameter_value().integer_value
+        self.search_step = self.get_parameter(
+            "search_step").get_parameter_value().integer_value
+        self.vehicle_length = self.get_parameter(
+            "vehicle_length").get_parameter_value().double_value
+        self.velocity = self.get_parameter(
+            "velocity").get_parameter_value().double_value
+        self.coordinates_tolerance = self.get_parameter(
+            "coordinates_tolerance").get_parameter_value().integer_value
+        self.yaw_tolerance = self.get_parameter(
+            "yaw_tolerance").get_parameter_value().integer_value
+        self.min_forward_cost = self.get_parameter(
+            "min_forward_cost").get_parameter_value().integer_value
+        self.max_forward_cost = self.get_parameter(
+            "max_forward_cost").get_parameter_value().integer_value
+        self.min_reverse_cost = self.get_parameter(
+            "min_reverse_cost").get_parameter_value().integer_value
+        self.max_reverse_cost = self.get_parameter(
+            "max_reverse_cost").get_parameter_value().integer_value
+
         # Set up subscribers and publishers
         self.map_sub = self.create_subscription(
             OccupancyGrid, self.costmap_topic, self.map_callback, map_qos
@@ -273,7 +303,7 @@ class AStarPlanner(Node):
             self.get_logger().warn("No path found to the goal.")
 
     def goal_reached(self, node: GraphNode, goal: GraphNode,
-                    pos_tol_cells: int = 1, yaw_tol_rad: float = math.radians(1)):
+                    pos_tol_cells: int, yaw_tol_rad: float):
         # position tolerance in grid cells
         if abs(node.x - goal.x) > pos_tol_cells or abs(node.y - goal.y) > pos_tol_cells:
             return False
@@ -286,20 +316,20 @@ class AStarPlanner(Node):
         # Define possible movement directions
         # (v, delta, cost) +ve is left
         explore_directions = []
-        v_forward = 0.4
-        v_reverse = -0.4
+        v_forward = self.velocity
+        v_reverse = -self.velocity
 
-        for delta in range(-60, 61, 3):  # -60 to 60 inclusive
+        for delta in range(-self.search_angle, self.search_angle+1, self.search_step):  
             # cost increases with steering angle magnitude
-            cost = 2 + int(abs(delta) / 30 * (10 - 2))  # min=2 at 0°, max=10 at ±30°
+            cost = self.min_forward_cost + int(abs(delta) / self.search_angle * (self.max_forward_cost - self.min_forward_cost))
             explore_directions.append((v_forward, delta, cost))
 
-        for delta in range(-60, 61, 3):
+        for delta in range(-self.search_angle, self.search_angle+1, self.search_step):
             # reverse is more expensive overall
-            cost = 40 + int(abs(delta) / 30 * (50 - 40))  # min=40 at 0°, max=50 at ±30°
+            cost = self.min_reverse_cost + int(abs(delta) / self.search_angle * (self.max_reverse_cost - self.min_reverse_cost))
             explore_directions.append((v_reverse, delta, cost))
 
-        length = 0.8
+        length = self.vehicle_length
         # Priority queue with custom comparison for Hybrid A* based on cost + heuristic
         pending_nodes = PriorityQueue()
         visited_nodes = {}
@@ -314,7 +344,7 @@ class AStarPlanner(Node):
             active_node: GraphNode = pending_nodes.get()
     
             # Goal found!
-            if self.goal_reached(active_node, goal_node):
+            if self.goal_reached(active_node, goal_node, self.coordinates_tolerance, math.radians(self.yaw_tolerance)):
                 self.get_logger().info(f"active node: {active_node} goal node: {goal_node}")
                 path = Path()
                 path.header.frame_id = self.map_.header.frame_id
