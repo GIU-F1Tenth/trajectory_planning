@@ -20,6 +20,7 @@ import numpy as np
 from scipy.ndimage import grey_dilation
 from tf2_geometry_msgs.tf2_geometry_msgs import do_transform_pose
 import math
+from scipy.interpolate import CubicSpline
 
 def euler_from_quaternion(quaternion):
     """
@@ -158,7 +159,7 @@ class AStarPlanner(Node):
         self.declare_parameter("search_angle", 60)  # degrees
         self.declare_parameter("search_step", 10)  # degrees    
         self.declare_parameter("vehicle_length", 0.8)  # meters
-        self.declare_parameter("velocity", 0.4)  # m/s
+        self.declare_parameter("velocity", 0.3)  # m/s
         self.declare_parameter("coordinates_tolerance", 1)  # cells
         self.declare_parameter("yaw_tolerance", 5)  # degrees
         self.declare_parameter("min_forward_cost", 2)  # minimum cost for forward movement
@@ -212,7 +213,10 @@ class AStarPlanner(Node):
             Marker, self.marker_topic, self.point_callback, 10
         )
         self.goal_sub = self.create_subscription(
-            PointStamped, self.point_topic, self.goal_callback, 10
+            PointStamped, self.point_topic, self.goal_point_callback, 10
+        )
+        self.goal_pose_sub = self.create_subscription(
+            PoseStamped, "/goal_pose", self.goal_pose_callback, 10
         )
         self.path_pub = self.create_publisher(Path, self.path_topic, 10)
         self.map_pub = self.create_publisher(OccupancyGrid, self.visited_map_topic, 10)
@@ -269,7 +273,44 @@ class AStarPlanner(Node):
         else:
             self.get_logger().warn("No path found to the goal.")
 
-    def goal_callback(self, point: PointStamped):
+    def goal_pose_callback(self, goal: PoseStamped):
+        if self.map_ is None:
+            self.get_logger().error("No map received!")
+            return
+
+        # reset visited map
+        self.visited_map_.data = [-1] * (self.visited_map_.info.height * self.visited_map_.info.width)
+
+        try:
+            map_to_base_tf = self.tf_buffer.lookup_transform(
+                self.map_.header.frame_id, self.base_frame, rclpy.time.Time()
+            )
+        except LookupException:
+            self.get_logger().error("Could not transform from map to base_link")
+            return
+
+        # start pose (robot current pose in map frame)
+        map_to_base_pose = Pose()
+        map_to_base_pose.position.x = map_to_base_tf.transform.translation.x
+        map_to_base_pose.position.y = map_to_base_tf.transform.translation.y
+        map_to_base_pose.orientation = map_to_base_tf.transform.rotation
+
+        # goal pose (from RViz 2D Goal Pose)
+        pose = PoseStamped()
+        pose.header = goal.header
+        pose.pose.position.x = goal.pose.position.x
+        pose.pose.position.y = goal.pose.position.y
+        pose.pose.orientation = goal.pose.orientation  # keep goal orientation
+
+        # send to planner
+        path = self.plan(map_to_base_pose, pose.pose)
+        if path and path.poses:
+            self.get_logger().info("Shortest path found!")
+            self.path_pub.publish(path)
+        else:
+            self.get_logger().warn("No path found to the goal.")
+
+    def goal_point_callback(self, point: PointStamped):
         if self.map_ is None:
             self.get_logger().error("No map received!")
             return
@@ -311,6 +352,67 @@ class AStarPlanner(Node):
         dtheta = math.atan2(math.sin(node.theta - goal.theta), math.cos(node.theta - goal.theta))
         return abs(dtheta) <= yaw_tol_rad
 
+    def construct_path(self, active_node: GraphNode, goal_node: GraphNode) -> Path:
+        self.get_logger().info(f"active node: {active_node} goal node: {goal_node}")
+        path = Path()
+        path.header.frame_id = self.map_.header.frame_id
+        while active_node and rclpy.ok():
+            last_pose: Pose = self.grid_to_world(active_node)
+            last_pose_stamped = PoseStamped()
+            last_pose_stamped.header.frame_id = self.map_.header.frame_id
+            last_pose_stamped.pose = last_pose
+            path.poses.append(last_pose_stamped)
+            active_node = active_node.prev
+
+        if self.is_antiClockwise == False:
+            path.poses.reverse()
+
+        return self.interpolate_path_with_spline(path)
+
+    def interpolate_path_with_spline(self, path: Path, num_points: int = 100) -> Path:
+        """
+        Takes a ROS 2 Path and applies natural cubic spline interpolation.
+        
+        Args:
+            path (Path): Input ROS2 path containing poses.
+            num_points (int): Number of points to sample in the interpolated path.
+
+        Returns:
+            Path: A new Path with spline-interpolated poses.
+        """
+        if len(path.poses) < 2:
+            raise ValueError("Path must contain at least 2 poses for interpolation")
+
+        # Extract x, y coordinates
+        x = np.array([pose.pose.position.x for pose in path.poses])
+        y = np.array([pose.pose.position.y for pose in path.poses])
+
+        # Use cumulative distance as parameter (arc-length-like)
+        distances = np.sqrt(np.diff(x)**2 + np.diff(y)**2)
+        t = np.concatenate(([0], np.cumsum(distances)))
+
+        # Build natural cubic splines
+        spline_x = CubicSpline(t, x, bc_type="natural")
+        spline_y = CubicSpline(t, y, bc_type="natural")
+
+        # Resample at evenly spaced points
+        t_new = np.linspace(0, t[-1], num_points)
+        x_new = spline_x(t_new)
+        y_new = spline_y(t_new)
+
+        # Build new Path message
+        new_path = Path()
+        new_path.header = path.header
+
+        for xi, yi in zip(x_new, y_new):
+            pose = PoseStamped()
+            pose.header = path.header
+            pose.pose.position.x = float(xi)
+            pose.pose.position.y = float(yi)
+            pose.pose.position.z = 0.0  # keep 2D path
+            new_path.poses.append(pose)
+
+        return new_path
 
     def plan(self, start: Pose, goal: Pose):
         # Define possible movement directions
@@ -345,21 +447,7 @@ class AStarPlanner(Node):
     
             # Goal found!
             if self.goal_reached(active_node, goal_node, self.coordinates_tolerance, math.radians(self.yaw_tolerance)):
-                self.get_logger().info(f"active node: {active_node} goal node: {goal_node}")
-                path = Path()
-                path.header.frame_id = self.map_.header.frame_id
-                while active_node and rclpy.ok():
-                    last_pose: Pose = self.grid_to_world(active_node)
-                    last_pose_stamped = PoseStamped()
-                    last_pose_stamped.header.frame_id = self.map_.header.frame_id
-                    last_pose_stamped.pose = last_pose
-                    path.poses.append(last_pose_stamped)
-                    active_node = active_node.prev
-
-                if self.is_antiClockwise == False:
-                    path.poses.reverse()
-
-                return path
+                return self.construct_path(active_node, goal_node)
             
             for v, delta, cost in explore_directions:
                 
