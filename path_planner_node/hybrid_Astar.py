@@ -164,8 +164,8 @@ class AStarPlanner(Node):
         self.declare_parameter("yaw_tolerance", 5)  # degrees
         self.declare_parameter("min_forward_cost", 2)  # minimum cost for forward movement
         self.declare_parameter("max_forward_cost", 10)  # maximum cost for forward movement
-        self.declare_parameter("min_reverse_cost", 40)  # minimum cost for reverse movement
-        self.declare_parameter("max_reverse_cost", 50)  # maximum cost for reverse
+        self.declare_parameter("min_reverse_cost", 20)  # minimum cost for reverse movement
+        self.declare_parameter("max_reverse_cost", 30)  # maximum cost for reverse
         
         # Get parameter values
         self.is_antiClockwise = self.get_parameter(
@@ -481,7 +481,6 @@ class AStarPlanner(Node):
                         new_node.heuristic = self.euclidean_distance(
                             new_node, goal_node)
                         pending_nodes.put(new_node)
-                        self.get_logger().info(f"adding {new_node} size {pending_nodes.qsize()}")
                         visited_nodes[(new_node.x, new_node.y, new_node.theta)] = new_node
 
             closed_nodes.add(active_node)
