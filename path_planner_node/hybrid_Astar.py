@@ -21,6 +21,8 @@ from scipy.ndimage import grey_dilation
 from tf2_geometry_msgs.tf2_geometry_msgs import do_transform_pose
 import math
 from scipy.interpolate import CubicSpline
+import dubins
+import reeds_shepp
 
 def euler_from_quaternion(quaternion):
     """
@@ -163,10 +165,11 @@ class AStarPlanner(Node):
         self.declare_parameter("coordinates_tolerance", 1)  # cells
         self.declare_parameter("yaw_tolerance", 5)  # degrees
         self.declare_parameter("min_forward_cost", 2)  # minimum cost for forward movement
-        self.declare_parameter("max_forward_cost", 10)  # maximum cost for forward movement
-        self.declare_parameter("min_reverse_cost", 20)  # minimum cost for reverse movement
-        self.declare_parameter("max_reverse_cost", 30)  # maximum cost for reverse
-        
+        self.declare_parameter("max_forward_cost", 20)  # maximum cost for forward movement
+        self.declare_parameter("min_reverse_cost", 25)  # minimum cost for reverse movement
+        self.declare_parameter("max_reverse_cost", 50)  # maximum cost for reverse
+        self.declare_parameter("heuristic", "dubins")  # heuristic type
+
         # Get parameter values
         self.is_antiClockwise = self.get_parameter(
             "is_antiClockwise").get_parameter_value().bool_value
@@ -204,6 +207,8 @@ class AStarPlanner(Node):
             "min_reverse_cost").get_parameter_value().integer_value
         self.max_reverse_cost = self.get_parameter(
             "max_reverse_cost").get_parameter_value().integer_value
+        self.heuristic = self.get_parameter(
+            "heuristic").get_parameter_value().string_value
 
         # Set up subscribers and publishers
         self.map_sub = self.create_subscription(
@@ -439,7 +444,7 @@ class AStarPlanner(Node):
 
         start_node = self.world_to_grid(start)
         goal_node = self.world_to_grid(goal)
-        start_node.heuristic = self.euclidean_distance(start_node, goal_node)
+        start_node.heuristic = self.compute_heuristic(start_node, goal_node)
         pending_nodes.put(start_node)
 
         while not pending_nodes.empty() and rclpy.ok():
@@ -478,7 +483,7 @@ class AStarPlanner(Node):
                         new_node.cost = active_node.cost + cost + \
                             self.map_.data[self.pose_to_cell(new_node)]
                         new_node.prev = active_node
-                        new_node.heuristic = self.euclidean_distance(
+                        new_node.heuristic = self.compute_heuristic(
                             new_node, goal_node)
                         pending_nodes.put(new_node)
                         visited_nodes[(new_node.x, new_node.y, new_node.theta)] = new_node
@@ -495,8 +500,43 @@ class AStarPlanner(Node):
     def euclidean_distance(self, node: GraphNode, goal_node: GraphNode):
         return ((node.x - goal_node.x)**2 + (node.y - goal_node.y)**2)**0.5
 
+    def dubins_distance(self, node: GraphNode, goal_node: GraphNode):
+        start = (node.x, node.y, node.theta)
+        end = (goal_node.x, goal_node.y, goal_node.theta)
+        path = dubins.shortest_path(start, end, self.vehicle_length)
+        return path.path_length()
+
+    def reeds_shepp_distance(self, node: GraphNode, goal_node: GraphNode):
+        start = (node.x, node.y, node.theta)
+        end = (goal_node.x, goal_node.y, goal_node.theta)
+        return reeds_shepp.path_length(start, end, self.vehicle_length)
+
     def pose_on_map(self, node: GraphNode):
         return 0 <= node.x < self.map_.info.width and 0 <= node.y < self.map_.info.height
+
+    def compute_heuristic(self, node: GraphNode, goal_node: GraphNode):
+        """
+        Compute heuristic value for a node based on its distance to the goal.
+        "reeds_shepp", "dubins", "euclidean", "manhattan"
+
+        Args:
+            node (GraphNode): Current node in the search graph
+            goal_node (GraphNode): Goal node in the search graph
+
+        Returns:
+            float: Heuristic value (distance) from current node to goal node
+        """
+
+        if self.heuristic == "reeds_shepp":
+            return self.reeds_shepp_distance(node, goal_node)
+        elif self.heuristic == "dubins":
+            return self.dubins_distance(node, goal_node)
+        elif self.heuristic == "euclidean":
+            return self.euclidean_distance(node, goal_node)
+        elif self.heuristic == "manhattan":
+            return self.manhattan_distance(node, goal_node)
+        else:
+            raise ValueError(f"Unknown heuristic: {self.heuristic}")
 
     def world_to_grid(self, pose: Pose) -> GraphNode:
         grid_x = int(
