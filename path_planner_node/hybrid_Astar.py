@@ -34,6 +34,8 @@ class GraphNode:
     and heuristic values for the Hybrid A* algorithm.
     """
 
+    bins = 72  # default number of bins for discretization
+
     def __init__(self, x, y, theta, cost=0, heuristic=0, prev=None):
         """
         Initialize a graph node.
@@ -71,7 +73,7 @@ class GraphNode:
     def __repr__(self):  # debug version
         return f"({self.x}, {self.y}, {math.degrees(self.theta)})"
 
-    def normalize_and_discretize_angle(self, theta, bins=72):
+    def normalize_and_discretize_angle(self, theta):
         """
         Normalizes an angle to [-π, π] range and discretizes it to 5-degree increments.
 
@@ -86,7 +88,7 @@ class GraphNode:
         normalized_theta = math.atan2(math.sin(theta), math.cos(theta))
 
         # Step 2: Convert 10 degrees to radians
-        discretization_step = math.radians(360 / bins)
+        discretization_step = math.radians(360 / GraphNode.bins)
 
         # Step 3: Discretize to nearest 10-degree increment
         # Round to nearest multiple of discretization_step
@@ -130,19 +132,20 @@ class AStarPlanner(Node):
         self.declare_parameter("visited_map_topic", "/visited_map")
         self.declare_parameter("point_topic", "/clicked_point")
         self.declare_parameter("search_angle", 60)  # degrees
-        self.declare_parameter("search_step", 10)  # degrees    
+        self.declare_parameter("search_step", 5)  # degrees    
         self.declare_parameter("vehicle_length", 0.8)  # meters
-        self.declare_parameter("velocity", 0.4)  # m/s
+        self.declare_parameter("velocity", 0.3)  # m/s
         self.declare_parameter("coordinates_tolerance", 1)  # cells
-        self.declare_parameter("yaw_tolerance", 5)  # degrees
+        self.declare_parameter("yaw_tolerance", 10)  # degrees
         self.declare_parameter("min_forward_cost", 1)  # minimum cost for forward movement
         self.declare_parameter("max_forward_cost", 10)  # maximum cost for forward movement
-        self.declare_parameter("min_reverse_cost", 40)  # minimum cost for reverse movement
-        self.declare_parameter("max_reverse_cost", 60)  # maximum cost for reverse
-        self.declare_parameter("heuristic", "dubins")  # heuristic type
+        self.declare_parameter("min_reverse_cost", 12)  # minimum cost for reverse movement
+        self.declare_parameter("max_reverse_cost", 20)  # maximum cost for reverse
+        self.declare_parameter("heuristic", "reeds_shepp")  # heuristic type
         self.declare_parameter("interpolation_resolution", 0.1)  # meters
         self.declare_parameter("goal_pose_topic", "/goal_pose")  # topic for goal pose
         self.declare_parameter("expansion_vectors_topic", "/expansion_vectors")  # topic for expansion vectors
+        self.declare_parameter("discretization_bins", 144)  # number of bins for discretization
 
         # Get parameter values
         self.is_antiClockwise = self.get_parameter(
@@ -189,6 +192,10 @@ class AStarPlanner(Node):
             "goal_pose_topic").get_parameter_value().string_value
         self.expansion_vectors_topic = self.get_parameter(
             "expansion_vectors_topic").get_parameter_value().string_value
+        self.discretization_bins = self.get_parameter(
+            "discretization_bins").get_parameter_value().integer_value
+
+        GraphNode.bins = self.discretization_bins  # set bins for GraphNode class
 
         # Set up subscribers and publishers
         self.map_sub = self.create_subscription(
@@ -487,7 +494,7 @@ class AStarPlanner(Node):
 
         start_node = self.world_to_grid(start)
         goal_node = self.world_to_grid(goal)
-        self.get_logger().info(f"Planning path using Hybrid A*... from {start_node} to {goal_node}")
+        self.get_logger().info(f"Planning path using Hybrid A*... from {start_node} to {goal_node}, {GraphNode.bins} bins")
 
         start_node.heuristic = self.compute_heuristic(start_node, goal_node)
         pending_nodes.put(start_node)
@@ -523,7 +530,6 @@ class AStarPlanner(Node):
                         if old_node.cost > new_cost:
                             old_node.cost = new_cost 
                             old_node.prev = active_node
-                            pending_nodes.put(old_node) # to update the cost in the queue
                     else:    
                         new_node.cost = active_node.cost + cost + \
                             self.map_.data[self.pose_to_cell(new_node)]
@@ -534,7 +540,7 @@ class AStarPlanner(Node):
                         visited_nodes[(new_node.x, new_node.y, new_node.theta)] = new_node
 
             closed_nodes.add(active_node)
-            self.visited_map_.data[self.pose_to_cell(active_node)] = -106
+            self.visited_map_.data[self.pose_to_cell(active_node)] = active_node.cost
             self.map_pub.publish(self.visited_map_)
 
         return None
