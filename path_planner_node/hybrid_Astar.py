@@ -168,7 +168,8 @@ class AStarPlanner(Node):
         self.declare_parameter("max_forward_cost", 20)  # maximum cost for forward movement
         self.declare_parameter("min_reverse_cost", 25)  # minimum cost for reverse movement
         self.declare_parameter("max_reverse_cost", 50)  # maximum cost for reverse
-        self.declare_parameter("heuristic", "dubins")  # heuristic type
+        self.declare_parameter("heuristic", "reeds_shepp")  # heuristic type
+        self.declare_parameter("interpolation_resolution", 0.1)  # meters
 
         # Get parameter values
         self.is_antiClockwise = self.get_parameter(
@@ -209,6 +210,8 @@ class AStarPlanner(Node):
             "max_reverse_cost").get_parameter_value().integer_value
         self.heuristic = self.get_parameter(
             "heuristic").get_parameter_value().string_value
+        self.interpolation_resolution = self.get_parameter(
+            "interpolation_resolution").get_parameter_value().double_value
 
         # Set up subscribers and publishers
         self.map_sub = self.create_subscription(
@@ -374,20 +377,24 @@ class AStarPlanner(Node):
 
         return self.interpolate_path_with_spline(path)
 
-    def interpolate_path_with_spline(self, path: Path, num_points: int = 100) -> Path:
+    def interpolate_path_with_spline(self, path: Path) -> Path:
         """
         Takes a ROS 2 Path and applies natural cubic spline interpolation.
+        Number of interpolation points is computed from path length and resolution.
         
         Args:
             path (Path): Input ROS2 path containing poses.
-            num_points (int): Number of points to sample in the interpolated path.
+            resolution (float): Desired spacing between interpolated points (meters).
 
         Returns:
             Path: A new Path with spline-interpolated poses.
         """
         if len(path.poses) < 2:
             raise ValueError("Path must contain at least 2 poses for interpolation")
-
+        resolution = self.interpolation_resolution
+        if resolution <= 0:
+            raise ValueError("Resolution must be a positive value")
+        
         # Extract x, y coordinates
         x = np.array([pose.pose.position.x for pose in path.poses])
         y = np.array([pose.pose.position.y for pose in path.poses])
@@ -396,6 +403,12 @@ class AStarPlanner(Node):
         distances = np.sqrt(np.diff(x)**2 + np.diff(y)**2)
         t = np.concatenate(([0], np.cumsum(distances)))
 
+        # Total path length
+        path_length = t[-1]
+
+        # Compute number of points automatically
+        num_points = max(2, int(path_length / resolution))
+        self.get_logger().info(f"Interpolating path with {num_points} points at {resolution} m resolution")
         # Build natural cubic splines
         spline_x = CubicSpline(t, x, bc_type="natural")
         spline_y = CubicSpline(t, y, bc_type="natural")
@@ -418,6 +431,7 @@ class AStarPlanner(Node):
             new_path.poses.append(pose)
 
         return new_path
+
 
     def plan(self, start: Pose, goal: Pose):
         # Define possible movement directions
