@@ -11,7 +11,7 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid, Path
 from geometry_msgs.msg import PoseStamped, Pose, PointStamped
-from visualization_msgs.msg import Marker
+from visualization_msgs.msg import Marker, MarkerArray
 from rclpy.qos import QoSProfile, DurabilityPolicy
 from tf2_ros import Buffer, TransformListener, LookupException
 from queue import PriorityQueue
@@ -23,37 +23,8 @@ import math
 from scipy.interpolate import CubicSpline
 import dubins
 import reeds_shepp
-
-def euler_from_quaternion(quaternion):
-    """
-    Convert quaternion to Euler angles.
-
-    Converts quaternion (w in last place) to euler roll, pitch, yaw.
-    This should be replaced when porting for ROS 2 Python tf_conversions is done.
-
-    Args:
-        quaternion (list): Quaternion as [x, y, z, w]
-
-    Returns:
-        tuple: (roll, pitch, yaw) in radians
-    """
-    x = quaternion[0]
-    y = quaternion[1]
-    z = quaternion[2]
-    w = quaternion[3]
-
-    sinr_cosp = 2 * (w * x + y * z)
-    cosr_cosp = 1 - 2 * (x * x + y * y)
-    roll = np.arctan2(sinr_cosp, cosr_cosp)
-
-    sinp = 2 * (w * y - z * x)
-    pitch = np.arcsin(sinp)
-
-    siny_cosp = 2 * (w * z + x * y)
-    cosy_cosp = 1 - 2 * (y * y + z * z)
-    yaw = np.arctan2(siny_cosp, cosy_cosp)
-
-    return roll, pitch, yaw
+from geometry_msgs.msg import Quaternion
+import tf_transformations
 
 class GraphNode:
     """
@@ -161,15 +132,17 @@ class AStarPlanner(Node):
         self.declare_parameter("search_angle", 60)  # degrees
         self.declare_parameter("search_step", 10)  # degrees    
         self.declare_parameter("vehicle_length", 0.8)  # meters
-        self.declare_parameter("velocity", 0.3)  # m/s
+        self.declare_parameter("velocity", 0.4)  # m/s
         self.declare_parameter("coordinates_tolerance", 1)  # cells
         self.declare_parameter("yaw_tolerance", 5)  # degrees
-        self.declare_parameter("min_forward_cost", 2)  # minimum cost for forward movement
-        self.declare_parameter("max_forward_cost", 20)  # maximum cost for forward movement
-        self.declare_parameter("min_reverse_cost", 25)  # minimum cost for reverse movement
-        self.declare_parameter("max_reverse_cost", 50)  # maximum cost for reverse
-        self.declare_parameter("heuristic", "reeds_shepp")  # heuristic type
+        self.declare_parameter("min_forward_cost", 1)  # minimum cost for forward movement
+        self.declare_parameter("max_forward_cost", 10)  # maximum cost for forward movement
+        self.declare_parameter("min_reverse_cost", 40)  # minimum cost for reverse movement
+        self.declare_parameter("max_reverse_cost", 60)  # maximum cost for reverse
+        self.declare_parameter("heuristic", "dubins")  # heuristic type
         self.declare_parameter("interpolation_resolution", 0.1)  # meters
+        self.declare_parameter("goal_pose_topic", "/goal_pose")  # topic for goal pose
+        self.declare_parameter("expansion_vectors_topic", "/expansion_vectors")  # topic for expansion vectors
 
         # Get parameter values
         self.is_antiClockwise = self.get_parameter(
@@ -212,6 +185,10 @@ class AStarPlanner(Node):
             "heuristic").get_parameter_value().string_value
         self.interpolation_resolution = self.get_parameter(
             "interpolation_resolution").get_parameter_value().double_value
+        self.goal_pose_topic = self.get_parameter(
+            "goal_pose_topic").get_parameter_value().string_value
+        self.expansion_vectors_topic = self.get_parameter(
+            "expansion_vectors_topic").get_parameter_value().string_value
 
         # Set up subscribers and publishers
         self.map_sub = self.create_subscription(
@@ -224,14 +201,65 @@ class AStarPlanner(Node):
             PointStamped, self.point_topic, self.goal_point_callback, 10
         )
         self.goal_pose_sub = self.create_subscription(
-            PoseStamped, "/goal_pose", self.goal_pose_callback, 10
+            PoseStamped, self.goal_pose_topic, self.goal_pose_callback, 10
         )
-        self.path_pub = self.create_publisher(Path, self.path_topic, 10)
-        self.map_pub = self.create_publisher(OccupancyGrid, self.visited_map_topic, 10)
+        self.path_pub = self.create_publisher(
+            Path, self.path_topic, 10
+        )
+        self.map_pub = self.create_publisher(
+            OccupancyGrid, self.visited_map_topic, 10
+        )
+        # New publisher for path expansion vectors
+        self.vector_pub = self.create_publisher(
+            MarkerArray, self.expansion_vectors_topic, 10
+        )
 
         # Initialize map storage
         self.map_ = OccupancyGrid()
         self.visited_map_ = OccupancyGrid()
+
+    def publish_path_arrows(self, path: Path):
+        marker_array = MarkerArray()
+        marker_id = 0
+
+        for pose_stamped in path.poses:
+            marker = Marker()
+            marker.header.frame_id = path.header.frame_id
+            marker.header.stamp = self.get_clock().now().to_msg()
+            marker.ns = "astar_path"
+            marker.id = marker_id
+            marker_id += 1
+
+            marker.type = Marker.ARROW
+            marker.action = Marker.ADD
+
+            marker.pose = pose_stamped.pose  # use the pose from the path
+
+            # extract yaw from quaternion to reapply orientation
+            q = (
+                pose_stamped.pose.orientation.x,
+                pose_stamped.pose.orientation.y,
+                pose_stamped.pose.orientation.z,
+                pose_stamped.pose.orientation.w,
+            )
+            _, _, yaw = tf_transformations.euler_from_quaternion(q)
+            q_new = tf_transformations.quaternion_from_euler(0, 0, yaw)
+            marker.pose.orientation = Quaternion(x=q_new[0], y=q_new[1], z=q_new[2], w=q_new[3])
+
+            # size and color
+            marker.scale.x = 0.2
+            marker.scale.y = 0.05
+            marker.scale.z = 0.05
+
+            marker.color.a = 1.0
+            marker.color.r = 0.0
+            marker.color.g = 1.0
+            marker.color.b = 0.0
+
+            marker_array.markers.append(marker)
+
+        self.vector_pub.publish(marker_array)
+        self.get_logger().info(f"Published {len(marker_array.markers)} arrows for path")
 
     def map_callback(self, map_msg: OccupancyGrid):
         """
@@ -374,7 +402,8 @@ class AStarPlanner(Node):
 
         if self.is_antiClockwise == False:
             path.poses.reverse()
-
+        self.publish_path_arrows(path)
+        self.get_logger().info(f"Path constructed with {self.heuristic} heuristic and {len(path.poses)} poses")
         return self.interpolate_path_with_spline(path)
 
     def interpolate_path_with_spline(self, path: Path) -> Path:
@@ -458,6 +487,8 @@ class AStarPlanner(Node):
 
         start_node = self.world_to_grid(start)
         goal_node = self.world_to_grid(goal)
+        self.get_logger().info(f"Planning path using Hybrid A*... from {start_node} to {goal_node}")
+
         start_node.heuristic = self.compute_heuristic(start_node, goal_node)
         pending_nodes.put(start_node)
 
@@ -558,7 +589,7 @@ class AStarPlanner(Node):
         grid_y = int(
             (pose.position.y - self.map_.info.origin.position.y) / self.map_.info.resolution)
         q = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
-        roll, pitch, yaw = euler_from_quaternion(q)
+        _, _, yaw = tf_transformations.euler_from_quaternion(q)
         return GraphNode(grid_x, grid_y, yaw)
 
     def grid_to_world(self, node: GraphNode) -> Pose:
@@ -567,6 +598,9 @@ class AStarPlanner(Node):
             self.map_.info.origin.position.x
         pose.position.y = node.y * self.map_.info.resolution + \
             self.map_.info.origin.position.y
+        pose.position.z = 0.0
+        q = tf_transformations.quaternion_from_euler(0, 0, node.theta)
+        pose.orientation = Quaternion(x=q[0], y=q[1], z=q[2], w=q[3])
         return pose
 
     def pose_to_cell(self, node: GraphNode):
