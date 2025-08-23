@@ -112,7 +112,7 @@ class AStarPlanner(Node):
 
         Sets up subscribers, publishers, parameters, and TF listeners.
         """
-        super().__init__("a_star_node")
+        super().__init__("hybrid_Astar_node")
 
         # Set up TF2 for coordinate transformations
         self.tf_buffer = Buffer()
@@ -131,9 +131,9 @@ class AStarPlanner(Node):
         self.declare_parameter("base_frame", "ego_racecar/base_link")
         self.declare_parameter("visited_map_topic", "/visited_map")
         self.declare_parameter("point_topic", "/clicked_point")
-        self.declare_parameter("search_angle", 60)  # degrees
+        self.declare_parameter("search_angle", 30)  # degrees
         self.declare_parameter("search_step", 5)  # degrees    
-        self.declare_parameter("vehicle_length", 0.8)  # meters
+        self.declare_parameter("vehicle_length", 0.33)  # meters
         self.declare_parameter("velocity", 0.3)  # m/s
         self.declare_parameter("coordinates_tolerance", 1)  # cells
         self.declare_parameter("yaw_tolerance", 10)  # degrees
@@ -145,7 +145,7 @@ class AStarPlanner(Node):
         self.declare_parameter("interpolation_resolution", 0.1)  # meters
         self.declare_parameter("goal_pose_topic", "/goal_pose")  # topic for goal pose
         self.declare_parameter("expansion_vectors_topic", "/expansion_vectors")  # topic for expansion vectors
-        self.declare_parameter("discretization_bins", 144)  # number of bins for discretization
+        self.declare_parameter("discretization_bins", 36)  # number of bins for discretization
 
         # Get parameter values
         self.is_antiClockwise = self.get_parameter(
@@ -540,7 +540,7 @@ class AStarPlanner(Node):
                         visited_nodes[(new_node.x, new_node.y, new_node.theta)] = new_node
 
             closed_nodes.add(active_node)
-            self.visited_map_.data[self.pose_to_cell(active_node)] = active_node.cost
+            self.visited_map_.data[self.pose_to_cell(active_node)] = np.clip(active_node.cost, -127, 127)
             self.map_pub.publish(self.visited_map_)
 
         return None
