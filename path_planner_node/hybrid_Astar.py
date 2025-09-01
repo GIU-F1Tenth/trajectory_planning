@@ -25,6 +25,7 @@ import dubins
 import reeds_shepp
 from geometry_msgs.msg import Quaternion
 import tf_transformations
+import time
 
 class GraphNode:
     """
@@ -345,8 +346,15 @@ class AStarPlanner(Node):
         pose.pose.position.y = goal.pose.position.y
         pose.pose.orientation = goal.pose.orientation  # keep goal orientation
 
+        # measure planning time
+        start = time.perf_counter()
+
         # send to planner
         path = self.plan(map_to_base_pose, pose.pose)
+        
+        end = time.perf_counter() 
+        self.get_logger().info(f"Planning time: {end - start:.4f} seconds")
+
         if path and path.poses:
             self.get_logger().info("Shortest path found!")
             self.path_pub.publish(path)
