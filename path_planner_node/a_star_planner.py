@@ -19,7 +19,7 @@ from std_msgs.msg import Header
 import numpy as np
 from scipy.ndimage import grey_dilation
 from tf2_geometry_msgs.tf2_geometry_msgs import do_transform_pose
-
+import time
 
 class GraphNode:
     """
@@ -201,8 +201,15 @@ class AStarPlanner(Node):
         pose.pose.position.x = point.point.x
         pose.pose.position.y = point.point.y
 
-        # sending goal pose to the planner
+        # measure planning time
+        start = time.perf_counter()
+
+        # send to planner
         path = self.plan(map_to_base_pose, pose.pose)
+        
+        end = time.perf_counter() 
+        self.get_logger().info(f"Planning time: {end - start:.4f} seconds")
+
         if path.poses:
             self.get_logger().info("Shortest path found!")
             self.path_pub.publish(path)
@@ -211,7 +218,7 @@ class AStarPlanner(Node):
 
     def plan(self, start: Pose, goal: Pose):
         # Define possible movement directions
-        explore_directions = [(-1, 0, 10), (1, 0, 10), (-1, 1, 14), (1, 1, 14), (0, -1, 10), (0, 1, 10), (1, -1, 14), (-1, -1, 14)] # my addition for the perfect path
+        explore_directions = [(-1, 0, 10), (1, 0, 10), (-1, 1, 14), (1, 1, 14), (0, -1, 10), (0, 1, 10), (1, -1, 14), (-1, -1, 14)] # (dx, dy, cost)
 
         # Priority queue with custom comparison for A* based on cost + heuristic
         pending_nodes = PriorityQueue()
@@ -241,7 +248,6 @@ class AStarPlanner(Node):
                         if new_node.cost > new_cost:
                             new_node.cost = new_cost 
                             new_node.prev = active_node
-                            pending_nodes.put(new_node)
                     else:    
                         new_node.cost = active_node.cost + cost + \
                             self.map_.data[self.pose_to_cell(new_node)]
