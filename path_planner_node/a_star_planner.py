@@ -86,11 +86,13 @@ class AStarPlanner(Node):
 
         # Declare parameters
         self.declare_parameter("is_antiClockwise", True)
-        self.declare_parameter("costmap_topic", "/costmap/costmap")
+        self.declare_parameter("costmap_topic", "/inflated_costmap")
         self.declare_parameter("marker_topic", "/astar_lookahead_marker")
         self.declare_parameter("path_topic", "/pp_path")
         self.declare_parameter("map_frame", "map")
-        self.declare_parameter("base_frame", "laser")
+        self.declare_parameter("base_frame", "ego_racecar/base_link")
+        self.declare_parameter("visited_map_topic", "/visited_map")
+        self.declare_parameter("point_topic", "/clicked_point")
 
         # Get parameter values
         self.is_antiClockwise = self.get_parameter(
@@ -105,7 +107,11 @@ class AStarPlanner(Node):
             "map_frame").get_parameter_value().string_value
         self.base_frame = self.get_parameter(
             "base_frame").get_parameter_value().string_value
-
+        self.visited_map_topic = self.get_parameter(
+            "visited_map_topic").get_parameter_value().string_value
+        self.point_topic = self.get_parameter(
+            "point_topic").get_parameter_value().string_value
+        
         # Set up subscribers and publishers
         self.map_sub = self.create_subscription(
             OccupancyGrid, self.costmap_topic, self.map_callback, map_qos
@@ -113,10 +119,15 @@ class AStarPlanner(Node):
         self.point_sub = self.create_subscription(
             Marker, self.marker_topic, self.point_callback, 10
         )
+        self.goal_sub = self.create_subscription(
+            PointStamped, self.point_topic, self.goal_callback, 10
+        )
         self.path_pub = self.create_publisher(Path, self.path_topic, 10)
+        self.map_pub = self.create_publisher(OccupancyGrid, self.visited_map_topic, 10)
 
         # Initialize map storage
-        self.map_ = None
+        self.map_ = OccupancyGrid()
+        self.visited_map_ = OccupancyGrid()
 
     def map_callback(self, map_msg: OccupancyGrid):
         """
@@ -126,10 +137,9 @@ class AStarPlanner(Node):
             map_msg (OccupancyGrid): The received occupancy grid message
         """
         self.map_ = map_msg
-        # self.map_ = self.create_cspace(map_msg)
-        # self.visited_map_.header.frame_id = map_msg.header.frame_id
-        # self.visited_map_.info = map_msg.info
-        # self.visited_map_.data = [-1] * (map_msg.info.height * map_msg.info.width)
+        self.visited_map_.header.frame_id = map_msg.header.frame_id
+        self.visited_map_.info = map_msg.info
+        self.visited_map_.data = [-1] * (map_msg.info.height * map_msg.info.width)
 
     def point_callback(self, marker: Marker):
         """
@@ -167,16 +177,16 @@ class AStarPlanner(Node):
         else:
             self.get_logger().warn("No path found to the goal.")
 
-    def goal_callback(self, pose: PoseStamped):
+    def goal_callback(self, point: PointStamped):
         if self.map_ is None:
             self.get_logger().error("No map received!")
             return
 
-        # self.visited_map_.data = [-1] * (self.visited_map_.info.height * self.visited_map_.info.width)
+        self.visited_map_.data = [-1] * (self.visited_map_.info.height * self.visited_map_.info.width)
 
         try:
             map_to_base_tf = self.tf_buffer.lookup_transform(
-                self.map_.header.frame_id, "base_link", rclpy.time.Time()
+                self.map_.header.frame_id, self.base_frame, rclpy.time.Time()
             )
         except LookupException:
             self.get_logger().error("Could not transform from map to base_link")
@@ -187,6 +197,11 @@ class AStarPlanner(Node):
         map_to_base_pose.position.y = map_to_base_tf.transform.translation.y
         map_to_base_pose.orientation = map_to_base_tf.transform.rotation
 
+        pose = PoseStamped()
+        pose.pose.position.x = point.point.x
+        pose.pose.position.y = point.point.y
+
+        # sending goal pose to the planner
         path = self.plan(map_to_base_pose, pose.pose)
         if path.poses:
             self.get_logger().info("Shortest path found!")
@@ -196,71 +211,50 @@ class AStarPlanner(Node):
 
     def plan(self, start: Pose, goal: Pose):
         # Define possible movement directions
-        # explore_directions = [(-1, 0), (1, 0), (-1, 1), (1, 1), (0, -1), (0, 1), (1, -1), (-1, -1)] # my addition for the perfect path
-        explore_directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        explore_directions = [(-1, 0, 10), (1, 0, 10), (-1, 1, 14), (1, 1, 14), (0, -1, 10), (0, 1, 10), (1, -1, 14), (-1, -1, 14)] # my addition for the perfect path
 
         # Priority queue with custom comparison for A* based on cost + heuristic
         pending_nodes = PriorityQueue()
-        visited_nodes = set()
+        visited_nodes = {}
+        closed_nodes = set()
 
         start_node = self.world_to_grid(start)
         goal_node = self.world_to_grid(goal)
-        start_node.heuristic = self.manhattan_distance(start_node, goal_node)
+        start_node.heuristic = self.euclidean_distance(start_node, goal_node)
         pending_nodes.put(start_node)
 
         while not pending_nodes.empty() and rclpy.ok():
-            active_node = pending_nodes.get()
+            active_node: GraphNode = pending_nodes.get()
 
             # Goal found!
             if active_node == goal_node:
                 break
 
-            # Explore neighbors
-            # for dir_x, dir_y in explore_directions:
-            #     new_node: GraphNode = active_node + (dir_x, dir_y)
-            for dir_x, dir_y in explore_directions:
+            for dir_x, dir_y, cost in explore_directions:
                 new_node: GraphNode = active_node + (dir_x, dir_y)
 
-                # Transform the grid cell to world coordinates
-                world_pose = self.grid_to_world(new_node)
-
-                try:
-                    # Transform point into base_link frame
-                    transform = self.tf_buffer.lookup_transform(
-                        "base_link", self.map_.header.frame_id, rclpy.time.Time())
-                    transformed = do_transform_pose(world_pose, transform)
-                    x_in_base = transformed.position.x
-                except (LookupException, Exception) as e:
-                    self.get_logger().warn(f"TF failed: {e}")
-                    continue
-
-                # Reject points behind the car
-                if x_in_base < 0:
-                    visited_nodes.add(new_node)
-                    continue
-
-                # if new_node.cost == 0: # if the node is newely created so we set its value with its value in the map "my addition"
-                #     new_node.cost = self.map_.data[self.pose_to_cell(new_node)] # my addition
-
-                if (new_node not in visited_nodes and self.pose_on_map(new_node) and
+                if (new_node not in closed_nodes and self.pose_on_map(new_node) and
                         0 <= self.map_.data[self.pose_to_cell(new_node)] < 99):
+                    if (new_node.x, new_node.y) in visited_nodes :
+                        new_node = visited_nodes[(new_node.x, new_node.y)]
+                        new_cost = active_node.cost + cost + self.map_.data[self.pose_to_cell(new_node)]
+                        if new_node.cost > new_cost:
+                            new_node.cost = new_cost 
+                            new_node.prev = active_node
+                            pending_nodes.put(new_node)
+                    else:    
+                        new_node.cost = active_node.cost + cost + \
+                            self.map_.data[self.pose_to_cell(new_node)]
+                        new_node.prev = active_node
+                        new_node.heuristic = self.euclidean_distance(
+                            new_node, goal_node)
+                        pending_nodes.put(new_node)
+                        visited_nodes[(new_node.x, new_node.y)] = new_node
 
-                    new_node.cost = active_node.cost + 1 + \
-                        self.map_.data[self.pose_to_cell(new_node)]
-                    # if abs(dir_y) == 1 and abs(dir_x) == 1: # my addition for the perfect path, if on the edges
-                    # new_node.cost = min(active_node.cost + 14 + self.map_.data[self.pose_to_cell(new_node)], new_node.cost) # my addition for the perfect path
-                    # else: # my addition for the perfect path
-                    # new_node.cost = min(active_node.cost + 10 + self.map_.data[self.pose_to_cell(new_node)], new_node.cost) # my addition for the perfect path
-                    new_node.heuristic = self.manhattan_distance(
-                        new_node, goal_node)
-                    new_node.prev = active_node
+            closed_nodes.add(active_node)
 
-                    pending_nodes.put(new_node)
-                    visited_nodes.add(new_node)
-                    # visited_nodes.add(active_node) # my addition for the perfect path
-
-            # self.visited_map_.data[self.pose_to_cell(active_node)] = -106
-            # self.map_pub.publish(self.visited_map_)
+            self.visited_map_.data[self.pose_to_cell(active_node)] = -106
+            self.map_pub.publish(self.visited_map_)
 
         path = Path()
         path.header.frame_id = self.map_.header.frame_id
@@ -278,6 +272,9 @@ class AStarPlanner(Node):
 
     def manhattan_distance(self, node: GraphNode, goal_node: GraphNode):
         return abs(node.x - goal_node.x) + abs(node.y - goal_node.y)
+
+    def euclidean_distance(selF, node: GraphNode, goal_node: GraphNode):
+        return ((node.x - goal_node.x)**2 + (node.y - goal_node.y)**2)**0.5
 
     def pose_on_map(self, node: GraphNode):
         return 0 <= node.x < self.map_.info.width and 0 <= node.y < self.map_.info.height
