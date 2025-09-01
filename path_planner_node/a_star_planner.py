@@ -15,31 +15,13 @@ from visualization_msgs.msg import Marker
 from rclpy.qos import QoSProfile, DurabilityPolicy
 from tf2_ros import Buffer, TransformListener, LookupException
 from queue import PriorityQueue
-from std_msgs.msg import Header
-import numpy as np
-from scipy.ndimage import grey_dilation
-from tf2_geometry_msgs.tf2_geometry_msgs import do_transform_pose
 import time
 
-class GraphNode:
-    """
-    A node in the search graph for A* pathfinding.
 
-    Represents a single cell in the occupancy grid with associated costs
-    and heuristic values for the A* algorithm.
-    """
+class GraphNode:
+    """A node in the search graph for A* pathfinding."""
 
     def __init__(self, x, y, cost=0, heuristic=0, prev=None):
-        """
-        Initialize a graph node.
-
-        Args:
-            x (int): Grid x-coordinate
-            y (int): Grid y-coordinate  
-            cost (float): Cost to reach this node from start
-            heuristic (float): Heuristic estimate to goal
-            prev (GraphNode): Previous node in path
-        """
         self.x = x
         self.y = y
         self.cost = cost
@@ -60,103 +42,102 @@ class GraphNode:
 
 
 class AStarPlanner(Node):
-    """
-    A ROS2 node implementing the A* path planning algorithm.
-
-    This node subscribes to occupancy grids and goal markers, then computes
-    optimal paths using the A* search algorithm. The computed paths are
-    published for use by path following controllers.
-    """
+    """A ROS2 node implementing the A* path planning algorithm."""
 
     def __init__(self):
-        """
-        Initialize the AStarPlanner node.
-
-        Sets up subscribers, publishers, parameters, and TF listeners.
-        """
         super().__init__("a_star_node")
 
-        # Set up TF2 for coordinate transformations
+        # TF2
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
-        # Configure QoS for map subscription
+        # QoS for map subscription
         map_qos = QoSProfile(depth=10)
         map_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
 
-        # Declare parameters
-        self.declare_parameter("is_antiClockwise", True)
-        self.declare_parameter("costmap_topic", "/inflated_costmap")
+        # -------------------------------
+        # Parameter Declarations
+        # -------------------------------
+        # General parameters
+        self.declare_parameter("is_antiClockwise", False)
+        self.declare_parameter("costmap_topic", "/costmap/costmap")
         self.declare_parameter("marker_topic", "/astar_lookahead_marker")
         self.declare_parameter("path_topic", "/pp_path")
         self.declare_parameter("map_frame", "map")
-        self.declare_parameter("base_frame", "ego_racecar/base_link")
-        self.declare_parameter("visited_map_topic", "/visited_map")
+        self.declare_parameter("base_frame", "laser")
+        self.declare_parameter("log_level", "INFO")
         self.declare_parameter("point_topic", "/clicked_point")
+        self.declare_parameter("visited_map_topic", "/visited_map")
 
-        # Get parameter values
-        self.is_antiClockwise = self.get_parameter(
-            "is_antiClockwise").get_parameter_value().bool_value
-        self.costmap_topic = self.get_parameter(
-            "costmap_topic").get_parameter_value().string_value
-        self.marker_topic = self.get_parameter(
-            "marker_topic").get_parameter_value().string_value
-        self.path_topic = self.get_parameter(
-            "path_topic").get_parameter_value().string_value
-        self.map_frame = self.get_parameter(
-            "map_frame").get_parameter_value().string_value
-        self.base_frame = self.get_parameter(
-            "base_frame").get_parameter_value().string_value
-        self.visited_map_topic = self.get_parameter(
-            "visited_map_topic").get_parameter_value().string_value
-        self.point_topic = self.get_parameter(
-            "point_topic").get_parameter_value().string_value
-        
-        # Set up subscribers and publishers
+        # Planning namespace
+        self.declare_parameter("planning.use_8_connected", False)
+        self.declare_parameter("planning.base_movement_cost", 1)
+        self.declare_parameter("planning.diagonal_movement_cost", 14)
+        self.declare_parameter("planning.reject_behind_robot", True)
+
+        # Occupancy namespace
+        self.declare_parameter("occupancy.occupied_threshold", 99)
+        self.declare_parameter("occupancy.free_threshold", 0)
+
+        # -------------------------------
+        # Parameter Retrieval
+        # -------------------------------
+        self.is_antiClockwise = self.get_parameter("is_antiClockwise").get_parameter_value().bool_value
+        self.costmap_topic = self.get_parameter("costmap_topic").get_parameter_value().string_value
+        self.marker_topic = self.get_parameter("marker_topic").get_parameter_value().string_value
+        self.path_topic = self.get_parameter("path_topic").get_parameter_value().string_value
+        self.map_frame = self.get_parameter("map_frame").get_parameter_value().string_value
+        self.base_frame = self.get_parameter("base_frame").get_parameter_value().string_value
+        self.log_level = self.get_parameter("log_level").get_parameter_value().string_value
+        self.point_topic = self.get_parameter("point_topic").get_parameter_value().string_value
+        self.visited_map_topic = self.get_parameter("visited_map_topic").get_parameter_value().string_value
+
+
+        # Planning
+        self.use_8_connected = self.get_parameter("planning.use_8_connected").get_parameter_value().bool_value
+        self.base_movement_cost = self.get_parameter("planning.base_movement_cost").get_parameter_value().integer_value
+        self.diagonal_movement_cost = self.get_parameter("planning.diagonal_movement_cost").get_parameter_value().integer_value
+        self.reject_behind_robot = self.get_parameter("planning.reject_behind_robot").get_parameter_value().bool_value
+
+        # Occupancy
+        self.occupied_threshold = self.get_parameter("occupancy.occupied_threshold").get_parameter_value().integer_value
+        self.free_threshold = self.get_parameter("occupancy.free_threshold").get_parameter_value().integer_value
+
+        # -------------------------------
+        # Subscribers & Publishers
+        # -------------------------------
         self.map_sub = self.create_subscription(
             OccupancyGrid, self.costmap_topic, self.map_callback, map_qos
         )
         self.point_sub = self.create_subscription(
             Marker, self.marker_topic, self.point_callback, 10
         )
+        self.path_pub = self.create_publisher(Path, self.path_topic, 10)
         self.goal_sub = self.create_subscription(
             PointStamped, self.point_topic, self.goal_callback, 10
         )
-        self.path_pub = self.create_publisher(Path, self.path_topic, 10)
-        self.map_pub = self.create_publisher(OccupancyGrid, self.visited_map_topic, 10)
+        self.map_pub = self.create_publisher(
+            OccupancyGrid, self.visited_map_topic, 10
+        )
 
-        # Initialize map storage
+        # Initialize maps
         self.map_ = OccupancyGrid()
         self.visited_map_ = OccupancyGrid()
 
     def map_callback(self, map_msg: OccupancyGrid):
-        """
-        Callback function for receiving occupancy grid maps.
-
-        Args:
-            map_msg (OccupancyGrid): The received occupancy grid message
-        """
         self.map_ = map_msg
         self.visited_map_.header.frame_id = map_msg.header.frame_id
         self.visited_map_.info = map_msg.info
         self.visited_map_.data = [-1] * (map_msg.info.height * map_msg.info.width)
 
     def point_callback(self, marker: Marker):
-        """
-        Callback function for processing goal markers.
-
-        Args:
-            marker (Marker): The received marker message containing the goal position
-        """
         if self.map_ is None:
             self.get_logger().error("No map received!")
             return
-        # self.visited_map_.data = [-1] * (self.visited_map_.info.height * self.visited_map_.info.width)
 
         pose = PoseStamped()
         pose.pose.position.x = marker.pose.position.x
         pose.pose.position.y = marker.pose.position.y
-
         try:
             map_to_base_tf = self.tf_buffer.lookup_transform(
                 self.map_.header.frame_id, self.base_frame, rclpy.time.Time()
@@ -183,6 +164,7 @@ class AStarPlanner(Node):
             return
 
         self.visited_map_.data = [-1] * (self.visited_map_.info.height * self.visited_map_.info.width)
+        self.get_logger().info(f"{self.map_.header.frame_id}, {self.base_frame}")
 
         try:
             map_to_base_tf = self.tf_buffer.lookup_transform(
@@ -201,13 +183,9 @@ class AStarPlanner(Node):
         pose.pose.position.x = point.point.x
         pose.pose.position.y = point.point.y
 
-        # measure planning time
         start = time.perf_counter()
-
-        # send to planner
         path = self.plan(map_to_base_pose, pose.pose)
-        
-        end = time.perf_counter() 
+        end = time.perf_counter()
         self.get_logger().info(f"Planning time: {end - start:.4f} seconds")
 
         if path.poses:
@@ -217,10 +195,27 @@ class AStarPlanner(Node):
             self.get_logger().warn("No path found to the goal.")
 
     def plan(self, start: Pose, goal: Pose):
-        # Define possible movement directions
-        explore_directions = [(-1, 0, 10), (1, 0, 10), (-1, 1, 14), (1, 1, 14), (0, -1, 10), (0, 1, 10), (1, -1, 14), (-1, -1, 14)] # (dx, dy, cost)
+        # Build movement directions based on parameters
+        if self.use_8_connected:
+            explore_directions = [
+                (-1, 0, self.base_movement_cost),
+                (1, 0, self.base_movement_cost),
+                (0, -1, self.base_movement_cost),
+                (0, 1, self.base_movement_cost),
+                (-1, 1, self.diagonal_movement_cost),
+                (1, 1, self.diagonal_movement_cost),
+                (1, -1, self.diagonal_movement_cost),
+                (-1, -1, self.diagonal_movement_cost)
+            ]
+        else:
+            explore_directions = [
+                (-1, 0, self.base_movement_cost),
+                (1, 0, self.base_movement_cost),
+                (0, -1, self.base_movement_cost),
+                (0, 1, self.base_movement_cost)
+            ]
 
-        # Priority queue with custom comparison for A* based on cost + heuristic
+        # Priority queue
         pending_nodes = PriorityQueue()
         visited_nodes = {}
         closed_nodes = set()
@@ -233,7 +228,6 @@ class AStarPlanner(Node):
         while not pending_nodes.empty() and rclpy.ok():
             active_node: GraphNode = pending_nodes.get()
 
-            # Goal found!
             if active_node == goal_node:
                 break
 
@@ -241,24 +235,21 @@ class AStarPlanner(Node):
                 new_node: GraphNode = active_node + (dir_x, dir_y)
 
                 if (new_node not in closed_nodes and self.pose_on_map(new_node) and
-                        0 <= self.map_.data[self.pose_to_cell(new_node)] < 99):
-                    if (new_node.x, new_node.y) in visited_nodes :
+                        self.free_threshold <= self.map_.data[self.pose_to_cell(new_node)] < self.occupied_threshold):
+                    if (new_node.x, new_node.y) in visited_nodes:
                         new_node = visited_nodes[(new_node.x, new_node.y)]
                         new_cost = active_node.cost + cost + self.map_.data[self.pose_to_cell(new_node)]
                         if new_node.cost > new_cost:
-                            new_node.cost = new_cost 
+                            new_node.cost = new_cost
                             new_node.prev = active_node
-                    else:    
-                        new_node.cost = active_node.cost + cost + \
-                            self.map_.data[self.pose_to_cell(new_node)]
+                    else:
+                        new_node.cost = active_node.cost + cost + self.map_.data[self.pose_to_cell(new_node)]
                         new_node.prev = active_node
-                        new_node.heuristic = self.euclidean_distance(
-                            new_node, goal_node)
+                        new_node.heuristic = self.euclidean_distance(new_node, goal_node)
                         pending_nodes.put(new_node)
                         visited_nodes[(new_node.x, new_node.y)] = new_node
 
             closed_nodes.add(active_node)
-
             self.visited_map_.data[self.pose_to_cell(active_node)] = -106
             self.map_pub.publish(self.visited_map_)
 
@@ -272,32 +263,25 @@ class AStarPlanner(Node):
             path.poses.append(last_pose_stamped)
             active_node = active_node.prev
 
-        if self.is_antiClockwise == False:
+        if not self.is_antiClockwise:
             path.poses.reverse()
         return path
 
-    def manhattan_distance(self, node: GraphNode, goal_node: GraphNode):
-        return abs(node.x - goal_node.x) + abs(node.y - goal_node.y)
-
-    def euclidean_distance(selF, node: GraphNode, goal_node: GraphNode):
+    def euclidean_distance(self, node: GraphNode, goal_node: GraphNode):
         return ((node.x - goal_node.x)**2 + (node.y - goal_node.y)**2)**0.5
 
     def pose_on_map(self, node: GraphNode):
         return 0 <= node.x < self.map_.info.width and 0 <= node.y < self.map_.info.height
 
     def world_to_grid(self, pose: Pose) -> GraphNode:
-        grid_x = int(
-            (pose.position.x - self.map_.info.origin.position.x) / self.map_.info.resolution)
-        grid_y = int(
-            (pose.position.y - self.map_.info.origin.position.y) / self.map_.info.resolution)
+        grid_x = int((pose.position.x - self.map_.info.origin.position.x) / self.map_.info.resolution)
+        grid_y = int((pose.position.y - self.map_.info.origin.position.y) / self.map_.info.resolution)
         return GraphNode(grid_x, grid_y)
 
     def grid_to_world(self, node: GraphNode) -> Pose:
         pose = Pose()
-        pose.position.x = node.x * self.map_.info.resolution + \
-            self.map_.info.origin.position.x
-        pose.position.y = node.y * self.map_.info.resolution + \
-            self.map_.info.origin.position.y
+        pose.position.x = node.x * self.map_.info.resolution + self.map_.info.origin.position.x
+        pose.position.y = node.y * self.map_.info.resolution + self.map_.info.origin.position.y
         return pose
 
     def pose_to_cell(self, node: GraphNode):
