@@ -8,7 +8,9 @@ from rclpy.qos import QoSProfile, DurabilityPolicy
 from tf2_ros import Buffer, TransformListener, LookupException
 from queue import PriorityQueue
 import time
-
+import numpy as np
+from scipy.interpolate import CubicSpline
+import math
 
 class GraphNode:
     def __init__(self, x, y, cost=0, prev=None):
@@ -28,7 +30,12 @@ class GraphNode:
 
     def __add__(self, other):
         return GraphNode(self.x + other[0], self.y + other[1])
+    
+    def __str__(self):   # like toString()
+        return f"({self.x}, {self.y})"
 
+    def __repr__(self):  # debug version
+        return f"({self.x}, {self.y})"
 
 class DijkstraPlanner(Node):
     def __init__(self):
@@ -42,6 +49,7 @@ class DijkstraPlanner(Node):
         # -----------------------------
         # Declare parameters
         # -----------------------------
+        self.declare_parameter("is_antiClockwise", False)
         self.declare_parameter("costmap_topic", "/inflated_costmap")
         self.declare_parameter("goal_topic", "/clicked_point")
         self.declare_parameter("path_topic", "/pp_path")
@@ -53,6 +61,8 @@ class DijkstraPlanner(Node):
         self.declare_parameter("planning.use_8_connected", True)
         self.declare_parameter("planning.base_movement_cost", 10)
         self.declare_parameter("planning.diagonal_movement_cost", 14)
+        self.declare_parameter("planning.interpolation_resolution", 0.1)  # meters
+        self.declare_parameter("planning.coordinates_tolerance", 1)  # cells
 
         # Occupancy thresholds
         self.declare_parameter("occupancy.occupied_threshold", 99)
@@ -64,6 +74,7 @@ class DijkstraPlanner(Node):
         # -----------------------------
         # Get parameters
         # -----------------------------
+        self.is_antiClockwise = self.get_parameter("is_antiClockwise").get_parameter_value().bool_value
         self.costmap_topic = self.get_parameter("costmap_topic").get_parameter_value().string_value
         self.goal_topic = self.get_parameter("goal_topic").get_parameter_value().string_value
         self.path_topic = self.get_parameter("path_topic").get_parameter_value().string_value
@@ -74,6 +85,8 @@ class DijkstraPlanner(Node):
         self.use_8_connected = self.get_parameter("planning.use_8_connected").get_parameter_value().bool_value
         self.base_movement_cost = self.get_parameter("planning.base_movement_cost").get_parameter_value().integer_value
         self.diagonal_movement_cost = self.get_parameter("planning.diagonal_movement_cost").get_parameter_value().integer_value
+        self.interpolation_resolution = self.get_parameter("planning.interpolation_resolution").get_parameter_value().double_value
+        self.coordinates_tolerance = self.get_parameter("planning.coordinates_tolerance").get_parameter_value().integer_value
 
         self.occupied_threshold = self.get_parameter("occupancy.occupied_threshold").get_parameter_value().integer_value
         self.free_threshold = self.get_parameter("occupancy.free_threshold").get_parameter_value().integer_value
@@ -138,6 +151,84 @@ class DijkstraPlanner(Node):
         else:
             self.get_logger().warn("No path found to the goal.")
 
+    def goal_reached(self, node: GraphNode, goal: GraphNode,
+                    pos_tol_cells: int):
+        # position tolerance in grid cells
+        if abs(node.x - goal.x) > pos_tol_cells or abs(node.y - goal.y) > pos_tol_cells:
+            return False
+        return True
+
+    def construct_path(self, active_node: GraphNode, goal_node: GraphNode) -> Path:
+        self.get_logger().info(f"active node: {active_node} goal node: {goal_node}")
+        path = Path()
+        path.header.frame_id = self.map_.header.frame_id
+        while active_node and rclpy.ok():
+            last_pose: Pose = self.grid_to_world(active_node)
+            last_pose_stamped = PoseStamped()
+            last_pose_stamped.header.frame_id = self.map_.header.frame_id
+            last_pose_stamped.pose = last_pose
+            path.poses.append(last_pose_stamped)
+            active_node = active_node.prev
+
+        if self.is_antiClockwise == False:
+            path.poses.reverse()
+        return self.interpolate_path_with_spline(path)
+
+    def interpolate_path_with_spline(self, path: Path) -> Path:
+        """
+        Takes a ROS 2 Path and applies natural cubic spline interpolation.
+        Number of interpolation points is computed from path length and resolution.
+        
+        Args:
+            path (Path): Input ROS2 path containing poses.
+            resolution (float): Desired spacing between interpolated points (meters).
+
+        Returns:
+            Path: A new Path with spline-interpolated poses.
+        """
+        if len(path.poses) < 2:
+            raise ValueError("Path must contain at least 2 poses for interpolation")
+        resolution = self.interpolation_resolution
+        if resolution <= 0:
+            raise ValueError("Resolution must be a positive value")
+        
+        # Extract x, y coordinates
+        x = np.array([pose.pose.position.x for pose in path.poses])
+        y = np.array([pose.pose.position.y for pose in path.poses])
+
+        # Use cumulative distance as parameter (arc-length-like)
+        distances = np.sqrt(np.diff(x)**2 + np.diff(y)**2)
+        t = np.concatenate(([0], np.cumsum(distances)))
+
+        # Total path length
+        path_length = t[-1]
+
+        # Compute number of points automatically
+        num_points = max(2, int(path_length / resolution))
+        self.get_logger().info(f"Interpolating path with {num_points} points at {resolution} m resolution")
+        # Build natural cubic splines
+        spline_x = CubicSpline(t, x, bc_type="natural")
+        spline_y = CubicSpline(t, y, bc_type="natural")
+
+        # Resample at evenly spaced points
+        t_new = np.linspace(0, t[-1], num_points)
+        x_new = spline_x(t_new)
+        y_new = spline_y(t_new)
+
+        # Build new Path message
+        new_path = Path()
+        new_path.header = path.header
+
+        for xi, yi in zip(x_new, y_new):
+            pose = PoseStamped()
+            pose.header = path.header
+            pose.pose.position.x = float(xi)
+            pose.pose.position.y = float(yi)
+            pose.pose.position.z = 0.0  # keep 2D path
+            new_path.poses.append(pose)
+
+        return new_path
+
     def plan(self, start: Pose, goal: Pose):
         # Movement directions
         if self.use_8_connected:
@@ -158,14 +249,14 @@ class DijkstraPlanner(Node):
         closed_nodes = set()
 
         start_node = self.world_to_grid(start)
+        goal_node = self.world_to_grid(goal)
         pending_nodes.put(start_node)
 
         while not pending_nodes.empty() and rclpy.ok():
             active_node: GraphNode = pending_nodes.get()
 
-            # Goal found!
-            if active_node == self.world_to_grid(goal):
-                break
+            if self.goal_reached(active_node, goal_node, self.coordinates_tolerance):
+                return self.construct_path(active_node, goal_node)
 
             for dir_x, dir_y, cost in explore_directions:
                 new_node: GraphNode = active_node + (dir_x, dir_y)
@@ -187,18 +278,7 @@ class DijkstraPlanner(Node):
             self.visited_map_.data[self.pose_to_cell(active_node)] = 10
             self.map_pub.publish(self.visited_map_)
 
-        path = Path()
-        path.header.frame_id = self.map_.header.frame_id
-        while active_node and active_node.prev and rclpy.ok():
-            last_pose: Pose = self.grid_to_world(active_node)
-            last_pose_stamped = PoseStamped()
-            last_pose_stamped.header.frame_id = self.map_.header.frame_id
-            last_pose_stamped.pose = last_pose
-            path.poses.append(last_pose_stamped)
-            active_node = active_node.prev
-
-        path.poses.reverse()
-        return path
+        return None
 
     def pose_on_map(self, node: GraphNode):
         return 0 <= node.x < self.map_.info.width and 0 <= node.y < self.map_.info.height

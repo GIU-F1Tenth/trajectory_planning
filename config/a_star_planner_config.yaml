@@ -31,6 +31,9 @@ a_star_node:
       
       # Obstacle rejection parameters
       reject_behind_robot: true
+
+      interpolation_resolution: 0.35  # meters
+      coordinates_tolerance: 1  # cells
       
     # Occupancy grid parameters
     occupancy:
