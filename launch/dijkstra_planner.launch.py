@@ -19,12 +19,20 @@ def generate_launch_description():
     """
     ld = LaunchDescription()
 
+    # Get the path to the configuration file
+    config_path = os.path.join(
+        get_package_share_directory("trajectory_planning"),
+        "config",
+        "dijkstra_planner_config.yaml"
+    )
+
     # Create the Dijkstra planner node
     dijkstra_node = Node(
         package='trajectory_planning',
-        executable='dijkestra_exe',
-        name='dijkstra_planner',
+        executable='dijkstra_exe',
+        name='dijkstra_node',
         output='screen',
+        parameters=[config_path],
         emulate_tty=True
     )
 

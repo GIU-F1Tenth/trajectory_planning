@@ -164,7 +164,6 @@ class AStarPlanner(Node):
             return
 
         self.visited_map_.data = [-1] * (self.visited_map_.info.height * self.visited_map_.info.width)
-        self.get_logger().info(f"{self.map_.header.frame_id}, {self.base_frame}")
 
         try:
             map_to_base_tf = self.tf_buffer.lookup_transform(
@@ -183,7 +182,11 @@ class AStarPlanner(Node):
         pose.pose.position.x = point.point.x
         pose.pose.position.y = point.point.y
 
+        self.get_logger().info(f"from: ({map_to_base_pose.position.x:.2f}, {map_to_base_pose.position.y:.2f}) to: ({pose.pose.position.x:.2f}, {pose.pose.position.y:.2f})")
+
+        # measure planning time
         start = time.perf_counter()
+        # send to planner
         path = self.plan(map_to_base_pose, pose.pose)
         end = time.perf_counter()
         self.get_logger().info(f"Planning time: {end - start:.4f} seconds")

@@ -346,12 +346,29 @@ class AStarPlanner(Node):
         pose.pose.position.y = goal.pose.position.y
         pose.pose.orientation = goal.pose.orientation  # keep goal orientation
 
+        base_theta = tf_transformations.euler_from_quaternion((
+            map_to_base_pose.orientation.x,
+            map_to_base_pose.orientation.y,
+            map_to_base_pose.orientation.z,
+            map_to_base_pose.orientation.w,
+        ))[2]
+
+        goal_theta = tf_transformations.euler_from_quaternion((
+            pose.pose.orientation.x,
+            pose.pose.orientation.y,
+            pose.pose.orientation.z,
+            pose.pose.orientation.w,
+        ))[2]
+
+        self.get_logger().info(
+            f"from: ({map_to_base_pose.position.x:.2f}, {map_to_base_pose.position.y:.2f}, {base_theta:.2f}) "
+            f"to: ({pose.pose.position.x:.2f}, {pose.pose.position.y:.2f}, {goal_theta:.2f})"
+        )
+
         # measure planning time
         start = time.perf_counter()
-
         # send to planner
         path = self.plan(map_to_base_pose, pose.pose)
-        
         end = time.perf_counter() 
         self.get_logger().info(f"Planning time: {end - start:.4f} seconds")
 
