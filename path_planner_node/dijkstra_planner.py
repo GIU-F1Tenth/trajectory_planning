@@ -151,6 +151,15 @@ class DijkstraPlanner(Node):
         else:
             self.get_logger().warn("No path found to the goal.")
 
+    def compute_path_length(self, path: Path) -> float:
+        total_length = 0.0
+        for i in range(1, len(path.poses)):
+            p1 = path.poses[i-1].pose.position
+            p2 = path.poses[i].pose.position
+            segment_length = math.sqrt((p2.x - p1.x)**2 + (p2.y - p1.y)**2)
+            total_length += segment_length
+        return total_length
+
     def goal_reached(self, node: GraphNode, goal: GraphNode,
                     pos_tol_cells: int):
         # position tolerance in grid cells
@@ -172,8 +181,11 @@ class DijkstraPlanner(Node):
 
         if self.is_antiClockwise == False:
             path.poses.reverse()
-        return self.interpolate_path_with_spline(path)
-
+        interpolated_path: Path = self.interpolate_path_with_spline(path)
+        path_length = self.compute_path_length(interpolated_path)
+        self.get_logger().info(f"Path constructed with {len(path.poses)} poses ({len(interpolated_path.poses)} after interpolation), length: {path_length:.2f} meters")
+        return interpolated_path
+    
     def interpolate_path_with_spline(self, path: Path) -> Path:
         """
         Takes a ROS 2 Path and applies natural cubic spline interpolation.

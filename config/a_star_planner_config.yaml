@@ -19,7 +19,10 @@ a_star_node:
     # Transform frames
     map_frame: "map"
     base_frame: "ego_racecar/base_link"
-    
+
+    # Heuristic type for path planning
+    heuristic: "manhattan"  # options: "euclidean", "manhattan"
+
     # Path planning parameters
     planning:
       # Movement directions (4-connected or 8-connected)

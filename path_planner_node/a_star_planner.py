@@ -19,7 +19,8 @@ import time
 import numpy as np
 from scipy.interpolate import CubicSpline
 import math
-
+import dubins
+import reeds_shepp
 
 class GraphNode:
     """A node in the search graph for A* pathfinding."""
@@ -76,6 +77,7 @@ class AStarPlanner(Node):
         self.declare_parameter("log_level", "INFO")
         self.declare_parameter("point_topic", "/clicked_point")
         self.declare_parameter("visited_map_topic", "/visited_map")
+        self.declare_parameter("heuristic", "reeds_shepp")  # heuristic type
 
         # Planning namespace
         self.declare_parameter("planning.use_8_connected", False)
@@ -101,6 +103,7 @@ class AStarPlanner(Node):
         self.log_level = self.get_parameter("log_level").get_parameter_value().string_value
         self.point_topic = self.get_parameter("point_topic").get_parameter_value().string_value
         self.visited_map_topic = self.get_parameter("visited_map_topic").get_parameter_value().string_value
+        self.heuristic = self.get_parameter("heuristic").get_parameter_value().string_value
         
         # Planning
         self.use_8_connected = self.get_parameter("planning.use_8_connected").get_parameter_value().bool_value
@@ -208,6 +211,15 @@ class AStarPlanner(Node):
         else:
             self.get_logger().warn("No path found to the goal.")
 
+    def compute_path_length(self, path: Path) -> float:
+        total_length = 0.0
+        for i in range(1, len(path.poses)):
+            p1 = path.poses[i-1].pose.position
+            p2 = path.poses[i].pose.position
+            segment_length = math.sqrt((p2.x - p1.x)**2 + (p2.y - p1.y)**2)
+            total_length += segment_length
+        return total_length
+
     def goal_reached(self, node: GraphNode, goal: GraphNode,
                     pos_tol_cells: int):
         # position tolerance in grid cells
@@ -229,8 +241,11 @@ class AStarPlanner(Node):
 
         if self.is_antiClockwise == False:
             path.poses.reverse()
-        return self.interpolate_path_with_spline(path)
-
+        interpolated_path: Path = self.interpolate_path_with_spline(path)
+        path_length = self.compute_path_length(interpolated_path)
+        self.get_logger().info(f"Path constructed with {self.heuristic} heuristic and {len(path.poses)} poses ({len(interpolated_path.poses)} after interpolation), length: {path_length:.2f} meters")
+        return interpolated_path
+    
     def interpolate_path_with_spline(self, path: Path) -> Path:
         """
         Takes a ROS 2 Path and applies natural cubic spline interpolation.
@@ -314,7 +329,7 @@ class AStarPlanner(Node):
 
         start_node = self.world_to_grid(start)
         goal_node = self.world_to_grid(goal)
-        start_node.heuristic = self.euclidean_distance(start_node, goal_node)
+        start_node.heuristic = self.compute_heuristic(start_node, goal_node)
         pending_nodes.put(start_node)
 
         while not pending_nodes.empty() and rclpy.ok():
@@ -337,7 +352,7 @@ class AStarPlanner(Node):
                     else:
                         new_node.cost = active_node.cost + cost + self.map_.data[self.pose_to_cell(new_node)]
                         new_node.prev = active_node
-                        new_node.heuristic = self.euclidean_distance(new_node, goal_node)
+                        new_node.heuristic = self.compute_heuristic(new_node, goal_node)
                         pending_nodes.put(new_node)
                         visited_nodes[(new_node.x, new_node.y)] = new_node
 
@@ -347,11 +362,35 @@ class AStarPlanner(Node):
 
         return None
 
+    def manhattan_distance(self, node: GraphNode, goal_node: GraphNode):
+        return abs(node.x - goal_node.x) + abs(node.y - goal_node.y)
+
     def euclidean_distance(self, node: GraphNode, goal_node: GraphNode):
         return ((node.x - goal_node.x)**2 + (node.y - goal_node.y)**2)**0.5
 
     def pose_on_map(self, node: GraphNode):
         return 0 <= node.x < self.map_.info.width and 0 <= node.y < self.map_.info.height
+
+    def compute_heuristic(self, node: GraphNode, goal_node: GraphNode):
+        """
+        Compute heuristic value for a node based on its distance to the goal.
+        "reeds_shepp", "dubins", "euclidean", "manhattan"
+
+        Args:
+            node (GraphNode): Current node in the search graph
+            goal_node (GraphNode): Goal node in the search graph
+
+        Returns:
+            float: Heuristic value (distance) from current node to goal node
+        """
+
+        if self.heuristic == "euclidean":
+            return self.euclidean_distance(node, goal_node)
+        elif self.heuristic == "manhattan":
+            return self.manhattan_distance(node, goal_node)
+        else:
+            raise ValueError(f"Unknown heuristic: {self.heuristic}")
+
 
     def world_to_grid(self, pose: Pose) -> GraphNode:
         grid_x = int((pose.position.x - self.map_.info.origin.position.x) / self.map_.info.resolution)
