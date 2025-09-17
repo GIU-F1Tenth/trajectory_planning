@@ -590,13 +590,15 @@ class AStarPlanner(Node):
     def dubins_distance(self, node: GraphNode, goal_node: GraphNode):
         start = (node.x, node.y, node.theta)
         end = (goal_node.x, goal_node.y, goal_node.theta)
-        path = dubins.shortest_path(start, end, self.vehicle_length)
+        min_turning_radius = self.vehicle_length/np.tan(np.radians(self.search_angle))
+        path = dubins.shortest_path(start, end, min_turning_radius)
         return path.path_length()
 
     def reeds_shepp_distance(self, node: GraphNode, goal_node: GraphNode):
         start = (node.x, node.y, node.theta)
         end = (goal_node.x, goal_node.y, goal_node.theta)
-        return reeds_shepp.path_length(start, end, self.vehicle_length)
+        min_turning_radius = self.vehicle_length/np.tan(np.radians(self.search_angle))
+        return reeds_shepp.path_length(start, end, min_turning_radius)
 
     def pose_on_map(self, node: GraphNode):
         return 0 <= node.x < self.map_.info.width and 0 <= node.y < self.map_.info.height
