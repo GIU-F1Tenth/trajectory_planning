@@ -1,0 +1,39 @@
+dynamic_lookahead_pub_node:
+  ros__parameters:
+    # Lookahead distance adapts based on velocity
+    lookahead_distance_min: 1.7      # [m] minimum lookahead distance
+    lookahead_distance_max: 2.5      # [m] maximum lookahead distance
+    velocity_scale: 0.6              # scaling factor (lookahead = v * scale)
+
+    # Topics
+    lookahead_marker_topic: "/lookahead_goal"
+    dynamic_pp_path: "/pp_path"
+    odom_topic: "ego_racecar/odom"
+    # Path CSV
+    csv_path: "/my_ws/src/trajectory_planning/path/map_race.csv"
+
+    # Frames
+    target_frame: "map"
+    source_frame: "ego_racecar/base_link"
+
+    # Timer update frequency
+    timer_frequency: 30.0  # Hz
+
+    # Marker visualization parameters
+    marker.scale_x: 0.3
+    marker.scale_y: 0.3
+    marker.scale_z: 0.3
+    marker.color_r: 1.0
+    marker.color_g: 0.0
+    marker.color_b: 0.0
+    marker.color_a: 1.0
+    marker.z_offset: 0.1
+
+    # Circle visualization parameters
+    circle.line_thickness: 0.03
+    circle.color_r: 0.0
+    circle.color_g: 1.0
+    circle.color_b: 0.0
+    circle.color_a: 1.0
+    circle.resolution: 60
+    circle.z_offset: 0.05

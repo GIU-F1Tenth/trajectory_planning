@@ -135,7 +135,7 @@ class AStarPlanner(Node):
         )
 
         # Initialize maps
-        self.map_ = OccupancyGrid()
+        self.map_ = None
         self.visited_map_ = OccupancyGrid()
 
     def map_callback(self, map_msg: OccupancyGrid):

@@ -223,7 +223,7 @@ class AStarPlanner(Node):
         )
 
         # Initialize map storage
-        self.map_ = OccupancyGrid()
+        self.map_ = None
         self.visited_map_ = OccupancyGrid()
 
     def publish_path_arrows(self, path: Path):
