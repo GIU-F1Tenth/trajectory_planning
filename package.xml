@@ -5,6 +5,7 @@
   <version>1.0.0</version>
   <description>GIU F1Tenth Car's trajectory planning package</description>
   <maintainer email="fam@awadlouis.com">Fam Shihata</maintainer>
+  <maintainer email="georgehany064@gmail.com">George Halim</maintainer>
   <license>MIT</license>
 
   <depend>geometry_msgs</depend>

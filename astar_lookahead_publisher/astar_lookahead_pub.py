@@ -93,7 +93,7 @@ class AstarLookahead(Node):
         # Load path from CSV file
         self.path = []  # List of tuples (x, y, v) representing waypoints
         self.path = self.load_path_from_csv(self.csv_path)
-
+        self.path.reverse()
         # Create publishers for markers and path
         self.lookahead_marker_pub = self.create_publisher(
             Marker, self.marker_pub_topic, 10)
@@ -151,6 +151,7 @@ class AstarLookahead(Node):
             if lookahead_point is None:
                 self.get_logger().warn("No lookahead point found go ")
             else:
+                lookahead_point = (lookahead_point[0], lookahead_point[1], closest_point[2]) # importing the velocity of the baselink to the lookahead point
                 self.publish_lookahead_marker(lookahead_point)
 
         except Exception as e:
@@ -220,7 +221,7 @@ class AstarLookahead(Node):
         marker.pose.position.x = point[0]
         marker.pose.position.y = point[1]
         marker.pose.position.z = 0.1  # Slightly above ground
-        marker.pose.orientation.w = 1.0
+        marker.pose.orientation.w = point[2] # velocity
         marker.scale.x = 0.3
         marker.scale.y = 0.3
         marker.scale.z = 0.3

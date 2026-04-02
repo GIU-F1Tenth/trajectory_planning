@@ -54,7 +54,8 @@ class PathPublisher(Node):
         # Create publisher and load/publish path
         self.path_publisher = self.create_publisher(Path, self.path_topic, 10)
         self.path = self.load_path_from_csv(self.csv_path)
-        self.publish_path()
+        for i in range(10):
+            self.publish_path()
 
     def load_path_from_csv(self, csv_path):
         """
