@@ -1,5 +1,5 @@
 csv_path_pub:
   ros__parameters:
-    path_topic: "/csv_pp_path" # "csv_pp_path"
-    csv_path: "/my_ws/src/trajectory_planning/path/map_race.csv"
-    speed_factor: 1.0
+    path_topic: "/pp_path" # "csv_pp_path"
+    csv_path: "/home/jetson/Desktop/mechabyte/software/src/planning/trajectory_planning/path/map.csv"
+    speed_factor: 1.07
