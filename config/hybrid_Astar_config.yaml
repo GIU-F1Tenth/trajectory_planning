@@ -1,0 +1,25 @@
+hybrid_Astar_node:
+  ros__parameters:
+    is_antiClockwise: true
+    costmap_topic: "/inflated_costmap"
+    marker_topic: "/astar_lookahead_marker"
+    path_topic: "/pp_path"
+    map_frame: "map"
+    base_frame: "ego_racecar/base_link"
+    visited_map_topic: "/visited_map"
+    point_topic: "/clicked_point"
+    search_angle: 30               # degrees
+    search_step: 5                 # degrees
+    vehicle_length: 0.33           # meters
+    velocity: 0.3                  # m/s
+    coordinates_tolerance: 1       # cells
+    yaw_tolerance: 10              # degrees
+    min_forward_cost: 1            # minimum cost for forward movement
+    max_forward_cost: 10           # maximum cost for forward movement
+    min_reverse_cost: 12           # minimum cost for reverse movement
+    max_reverse_cost: 20           # maximum cost for reverse
+    heuristic: "reeds_shepp"       # heuristic type (reeds_shepp, dubins, euclidean, manhattan)
+    interpolation_resolution: 0.1  # meters for path interpolation (decrease for higher accuracy)
+    goal_pose_topic: "/goal_pose"  # topic for goal pose
+    expansion_vectors_topic: "/expansion_vectors"  # topic for expansion vectors
+    discretization_bins: 36        # number of bins for discretization

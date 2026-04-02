@@ -30,7 +30,7 @@ def generate_launch_description():
     a_star_node = Node(
         package='trajectory_planning',
         executable='a_star_exe',
-        name='a_star_planner',
+        name='a_star_node',
         parameters=[config_path],
         output='screen',
         emulate_tty=True
