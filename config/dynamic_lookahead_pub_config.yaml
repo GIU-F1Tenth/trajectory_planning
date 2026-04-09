@@ -1,7 +1,7 @@
 dynamic_lookahead_pub_node:
   ros__parameters:
     # Lookahead distance adapts based on velocity
-    lookahead_distance_min: 1.7      # [m] minimum lookahead distance
+    lookahead_distance_min: 1.4      # [m] minimum lookahead distance
     lookahead_distance_max: 2.5      # [m] maximum lookahead distance
     velocity_scale: 0.6              # scaling factor (lookahead = v * scale)
 
@@ -10,7 +10,7 @@ dynamic_lookahead_pub_node:
     dynamic_pp_path: "/pp_path"
     odom_topic: "ego_racecar/odom"
     # Path CSV
-    csv_path: "/my_ws/src/trajectory_planning/path/map_race.csv"
+    csv_path: "/home/george/roboracer_sim/roboracer_ws/src/trajectory_planning/path/map_race.csv"
 
     # Frames
     target_frame: "map"
