@@ -30,15 +30,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'pure_pursuit_node_v1 = pure_pursuit_node.pure_pursuit_v1:main',
-            'pure_pursuit_node_v2 = pure_pursuit_node.pure_pursuit_v2:main',
-            'a_star_exe = path_planner_node.a_star_planner:main',
-            'hybrid_Astar_exe = path_planner_node.hybrid_Astar:main',
-            'dijkstra_exe = path_planner_node.dijkstra_planner:main',
-            'csv_pub_exe = csv_racingline_publisher.csv_path_pub:main',
-            'astar_lookahead_pub_exe = astar_lookahead_publisher.astar_lookahead_pub:main',
-            'lookahead_to_planner_exe = lookahead_to_planner.lookahead_to_planner:main',
-            'dynamic_lookahead_pub_exe = dynamic_lookahead.dynamic_lookahead:main'
+            "csv_path_pub = global_planner.csv_path_publisher:main",
+            'dynamic_lookahead_pub_exe = local_planner.dynamic_lookahead:main'
         ],
     },
 )
