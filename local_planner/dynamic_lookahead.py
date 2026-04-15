@@ -23,28 +23,28 @@ class DynamicLookahead(Node):
         super().__init__("dynamic_lookahead_pub_node")
 
         # Parameters
-        self.declare_parameter("lookahead_distance_min", 0.5)   # minimum lookahead
-        self.declare_parameter("lookahead_distance_max", 3.0)   # maximum lookahead
+        self.declare_parameter("lookahead_distance_min",
+                               0.5)   # minimum lookahead
+        self.declare_parameter("lookahead_distance_max",
+                               3.0)   # maximum lookahead
         self.declare_parameter("lookahead_marker_topic", "/lookahead_goal")
-        self.declare_parameter("csv_path", "")
-        self.declare_parameter("dynamic_pp_path", "/pp_path")
+        self.declare_parameter("csv_path_topic", "/csv_path")
         self.declare_parameter("target_frame", "map")
         self.declare_parameter("source_frame", "ego_racecar/base_link")
         self.declare_parameter("timer_frequency", 30.0)
         self.declare_parameter("odom_topic", "ego_racecar/odom")
         self.declare_parameter("velocity_scale", 1.0)
+        self.declare_parameter("reverse", False)
 
         # Get parameters
         self.lookahead_distance_min = self.get_parameter(
             "lookahead_distance_min").get_parameter_value().double_value
         self.lookahead_distance_max = self.get_parameter(
-            "lookahead_distance_max").get_parameter_value().double_value    
+            "lookahead_distance_max").get_parameter_value().double_value
         self.marker_pub_topic = self.get_parameter(
             "lookahead_marker_topic").get_parameter_value().string_value
-        self.csv_path = self.get_parameter(
-            "csv_path").get_parameter_value().string_value
-        self.dynamic_pp_path = self.get_parameter(
-            "dynamic_pp_path").get_parameter_value().string_value
+        self.csv_path_topic = self.get_parameter(
+            "csv_path_topic").get_parameter_value().string_value
         self.target_frame = self.get_parameter(
             "target_frame").get_parameter_value().string_value
         self.source_frame = self.get_parameter(
@@ -55,17 +55,20 @@ class DynamicLookahead(Node):
             "velocity_scale").get_parameter_value().double_value
         self.odom_topic = self.get_parameter(
             "odom_topic").get_parameter_value().string_value
-        
+        self.reverse = self.get_parameter(
+            "reverse").get_parameter_value().bool_value
+
         # Publishers
         self.lookahead_marker_pub = self.create_publisher(
             Marker, self.marker_pub_topic, 10)
         self.lookahead_circle_pub = self.create_publisher(
             Marker, "/dynamic_lookahead_circle", 10)
-        self.path_publisher = self.create_publisher(
-            Path, self.dynamic_pp_path, 10)
 
         # Subscribers
-        self.create_subscription(Odometry, self.odom_topic, self.odom_callback, 10)
+        self.create_subscription(
+            Odometry, self.odom_topic, self.odom_callback, 10)
+        self.create_subscription(
+            Path, self.csv_path_topic, self.csv_path_callback, 10)
 
         # TF listener
         self.tf_buffer = Buffer()
@@ -75,13 +78,21 @@ class DynamicLookahead(Node):
         timer_period = 1.0 / self.timer_frequency
         self.timer = self.create_timer(timer_period, self.get_pose)
 
-        # Load path
-        self.path = self.load_path_from_csv(self.csv_path)
-        self.path.reverse()
-
         # Variables
         self.current_velocity = 0.0
         self.marker = None
+
+    def csv_path_callback(self, msg: Path):
+        """Convert Path message to internal path format."""
+        self.path = []
+        for pose in msg.poses:
+            x = pose.pose.position.x
+            y = pose.pose.position.y
+            v = pose.pose.orientation.w
+            self.path.append((x, y, v))
+
+        if self.reverse:
+            self.path.reverse()  # reverse for easier pop from end
 
     def odom_callback(self, msg: Odometry):
         """Extract velocity magnitude from odometry."""
@@ -93,15 +104,6 @@ class DynamicLookahead(Node):
         # Clamp between min and max
         return max(self.lookahead_distance_min,
                    min(dynamic_lookahead, self.lookahead_distance_max))
-
-    def load_path_from_csv(self, csv_path):
-        path = []
-        with open(csv_path, newline='') as csvfile:
-            reader = csv.reader(csvfile)
-            for row in reader:
-                x, y, v = float(row[0]), float(row[1]), float(row[2])
-                path.append((x, y, v))
-        return path
 
     def get_pose(self):
         try:
@@ -123,7 +125,8 @@ class DynamicLookahead(Node):
             self.publish_lookahead_circle(x, y)
             lookahead_point, closest_point, _ = self.find_lookahead_point(x, y)
             if lookahead_point:
-                lookahead_point = (lookahead_point[0], lookahead_point[1], closest_point[2])
+                lookahead_point = (
+                    lookahead_point[0], lookahead_point[1], closest_point[2])
                 self.publish_lookahead_marker(lookahead_point)
 
         except Exception as e:

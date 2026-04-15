@@ -7,10 +7,10 @@ dynamic_lookahead_pub_node:
 
     # Topics
     lookahead_marker_topic: "/lookahead_goal"
-    dynamic_pp_path: "/pp_path"
     odom_topic: "ego_racecar/odom"
     # Path CSV
-    csv_path: "/my_ws/src/trajectory_planning/path/map_race.csv"
+    csv_path_topic: "/csv_path"
+    reverse: False 
 
     # Frames
     target_frame: "map"
