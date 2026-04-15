@@ -81,6 +81,7 @@ class DynamicLookahead(Node):
         # Variables
         self.current_velocity = 0.0
         self.marker = None
+        self.path = []
 
     def csv_path_callback(self, msg: Path):
         """Convert Path message to internal path format."""
