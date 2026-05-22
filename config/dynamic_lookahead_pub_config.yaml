@@ -4,6 +4,12 @@ dynamic_lookahead_pub_node:
     lookahead_distance_min: 1.7      # [m] minimum lookahead distance
     lookahead_distance_max: 2.5      # [m] maximum lookahead distance
     velocity_scale: 0.6              # scaling factor (lookahead = v * scale)
+    use_lateral_deviation_based_lookahead: true
+    lookahead_velocity_weight: 0.5
+    lookahead_lateral_deviation_weight: 0.5
+    max_lateral_deviation: 1.0       # [m] lateral deviation that maps to maximum lookahead
+    use_lateral_error_speed_reducer: true
+    lateral_error_speed_reducer_gain: 2.0
 
     # Topics
     lookahead_marker_topic: "/lookahead_goal"

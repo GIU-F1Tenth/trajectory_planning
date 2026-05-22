@@ -34,6 +34,12 @@ class DynamicLookahead(Node):
         self.declare_parameter("timer_frequency", 30.0)
         self.declare_parameter("odom_topic", "ego_racecar/odom")
         self.declare_parameter("velocity_scale", 1.0)
+        self.declare_parameter("use_lateral_deviation_based_lookahead", False)
+        self.declare_parameter("lookahead_velocity_weight", 0.5)
+        self.declare_parameter("lookahead_lateral_deviation_weight", 0.5)
+        self.declare_parameter("max_lateral_deviation", 1.0)
+        self.declare_parameter("use_lateral_error_speed_reducer", True)
+        self.declare_parameter("lateral_error_speed_reducer_gain", 0.1)
         self.declare_parameter("reverse", False)
 
         # Get parameters
@@ -55,6 +61,19 @@ class DynamicLookahead(Node):
             "velocity_scale").get_parameter_value().double_value
         self.odom_topic = self.get_parameter(
             "odom_topic").get_parameter_value().string_value
+        self.use_lateral_deviation_based_lookahead = self.get_parameter(
+            "use_lateral_deviation_based_lookahead"
+        ).get_parameter_value().bool_value
+        self.lookahead_velocity_weight = self.get_parameter(
+            "lookahead_velocity_weight").get_parameter_value().double_value
+        self.lookahead_lateral_deviation_weight = self.get_parameter(
+            "lookahead_lateral_deviation_weight").get_parameter_value().double_value
+        self.max_lateral_deviation = self.get_parameter(
+            "max_lateral_deviation").get_parameter_value().double_value
+        self.use_lateral_error_speed_reducer = self.get_parameter(
+            "use_lateral_error_speed_reducer").get_parameter_value().bool_value
+        self.lateral_error_speed_reducer_gain = self.get_parameter(
+            "lateral_error_speed_reducer_gain").get_parameter_value().double_value
         self.reverse = self.get_parameter(
             "reverse").get_parameter_value().bool_value
 
@@ -82,6 +101,7 @@ class DynamicLookahead(Node):
         self.current_velocity = 0.0
         self.marker = None
         self.path = []
+        self.min_velocity = 0.0
 
     def csv_path_callback(self, msg: Path):
         """Convert Path message to internal path format."""
@@ -95,6 +115,15 @@ class DynamicLookahead(Node):
         if self.reverse:
             self.path.reverse()  # reverse for easier pop from end
 
+        self.min_velocity = self.get_path_min_velocity()
+
+    def get_path_min_velocity(self):
+        velocities = [point[2] for point in self.path if point[2] > 0.0]
+        if not velocities:
+            return 0.0
+
+        return min(velocities)
+
     def odom_callback(self, msg: Odometry):
         """Extract velocity magnitude from odometry."""
         self.current_velocity = msg.twist.twist.linear.x
@@ -105,6 +134,39 @@ class DynamicLookahead(Node):
         # Clamp between min and max
         return max(self.lookahead_distance_min,
                    min(dynamic_lookahead, self.lookahead_distance_max))
+
+    def compute_lateral_deviation_lookahead(self, lateral_error):
+        """Scale lookahead distance based on lateral deviation from the path."""
+        if self.max_lateral_deviation <= 0.0:
+            return self.lookahead_distance_max
+
+        lookahead = (
+            self.lookahead_distance_min
+            + abs(lateral_error)
+            * (self.lookahead_distance_max - self.lookahead_distance_min)
+            / self.max_lateral_deviation
+        )
+        return lookahead
+
+    def compute_lateral_deviation_velocity_lookahead(self, lateral_error):
+        """Blend velocity-based and lateral-deviation-based lookahead."""
+        velocity_lookahead = self.compute_dynamic_lookahead()
+        lateral_lookahead = self.compute_lateral_deviation_lookahead(lateral_error)
+        lookahead = (
+            self.lookahead_velocity_weight * velocity_lookahead
+            + self.lookahead_lateral_deviation_weight * lateral_lookahead
+        )
+        return max(
+            self.lookahead_distance_min,
+            min(lookahead, self.lookahead_distance_max),
+        )
+
+    def reduce_velocity_for_lateral_error(self, velocity, lateral_error):
+        if not self.use_lateral_error_speed_reducer or velocity <= 0.0:
+            return velocity
+
+        speed_reduction = abs(lateral_error) * self.lateral_error_speed_reducer_gain
+        return max(self.min_velocity, velocity - speed_reduction)
 
     def get_pose(self):
         try:
@@ -117,21 +179,52 @@ class DynamicLookahead(Node):
             )
 
             trans = transform.transform.translation
+            rot = transform.transform.rotation
             x, y = trans.x, trans.y
+            yaw = self.get_yaw_from_quaternion(rot)
 
             # Compute dynamic lookahead
             self.lookahead_distance = self.compute_dynamic_lookahead()
+            closest_path_point = self.find_closest_point_on_path(x, y)
+            lateral_error = 0.0
+            if closest_path_point is not None:
+                _, lateral_error = self.transform_to_vehicle_frame(
+                    closest_path_point, x, y, yaw
+                )
+
+            if self.use_lateral_deviation_based_lookahead:
+                if closest_path_point is not None:
+                    self.lookahead_distance = (
+                        self.compute_lateral_deviation_velocity_lookahead(
+                            lateral_error
+                        )
+                    )
 
             # Publish visuals
             self.publish_lookahead_circle(x, y)
             lookahead_point, closest_point, _ = self.find_lookahead_point(x, y)
             if lookahead_point:
+                target_velocity = self.reduce_velocity_for_lateral_error(
+                    closest_point[2], lateral_error
+                )
                 lookahead_point = (
-                    lookahead_point[0], lookahead_point[1], closest_point[2])
+                    lookahead_point[0], lookahead_point[1], target_velocity)
                 self.publish_lookahead_marker(lookahead_point)
 
         except Exception as e:
             self.get_logger().warn(f"Transform not available: {e}")
+
+    def find_closest_point_on_path(self, x, y):
+        closest_point = None
+        min_dist = float("inf")
+        for point in self.path:
+            dx = point[0] - x
+            dy = point[1] - y
+            dist = math.sqrt(dx**2 + dy**2)
+            if dist < min_dist:
+                min_dist = dist
+                closest_point = point
+        return closest_point
 
     def find_lookahead_point(self, x, y):
         closest_idx = 0
@@ -163,6 +256,18 @@ class DynamicLookahead(Node):
                 return self.path[i], self.path[closest_idx], i
 
         return None, None, None
+
+    def transform_to_vehicle_frame(self, point, x, y, yaw):
+        dx = point[0] - x
+        dy = point[1] - y
+        transformed_x = math.cos(-yaw) * dx - math.sin(-yaw) * dy
+        transformed_y = math.sin(-yaw) * dx + math.cos(-yaw) * dy
+        return transformed_x, transformed_y
+
+    def get_yaw_from_quaternion(self, q):
+        siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        return math.atan2(siny_cosp, cosy_cosp)
 
     def publish_lookahead_marker(self, point):
         marker = Marker()
