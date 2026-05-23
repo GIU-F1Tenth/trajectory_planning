@@ -9,6 +9,7 @@ from odometry.
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from nav_msgs.msg import Odometry, Path
 from geometry_msgs.msg import PoseStamped
 import math
@@ -85,7 +86,7 @@ class DynamicLookahead(Node):
 
         # Subscribers
         self.create_subscription(
-            Odometry, self.odom_topic, self.odom_callback, 10)
+            Odometry, self.odom_topic, self.odom_callback, qos_profile_sensor_data)
         self.create_subscription(
             Path, self.csv_path_topic, self.csv_path_callback, 10)
 
